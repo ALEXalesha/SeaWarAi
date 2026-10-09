@@ -20,8 +20,8 @@ from aikit.storage import is_int, load_json, save_json
 from game.core.rules import FLEET, SIZE
 
 LENGTHS = (1, 2, 3, 4)
-SMOOTH = 6.0            # сколько «случайных партий» подмешано к счёту
-BLUR = 0.25             # доля счёта, уходящая соседним клеткам
+SMOOTH = 15.0           # сколько «случайных партий» подмешано к счёту
+BLUR = 0.4              # доля счёта, уходящая соседним клеткам
 FIRST_SHOTS = 12
 N = SIZE * SIZE
 

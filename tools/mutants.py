@@ -37,3 +37,43 @@ MUTANTS = [
      "return tuple(sorted((len(s) for s, d in zip(self.ships, self.sunk) if not d), reverse=True))",
      "return tuple(sorted((len(s) for s in self.ships), reverse=True))", TB),
 ]
+P = "game/ai/prob.py"
+TP = "tests/test_prob.py"
+A = "game/ai/agents.py"
+TA = "tests/test_agents.py"
+TH = "tests/test_honesty.py"
+MUTANTS += [
+    ("prob: попадание можно не накрыть", P, "            if uncovered == 0:\n                state",
+     "            if True:\n                state", TP),
+    ("prob: корабль из одних попаданий", P, "ok = ~(c & blocked).any(1) & (c & ~hits).any(1)",
+     "ok = ~(c & blocked).any(1)", TP),
+    # «if unc & hb» в точном переборе - только отсечение: второй корабль у попадания всё равно
+    # упрётся в кольцо первого. Мутант равносилен, в списке его нет.
+    ("prob: потопленный не мешает соседям", P, "        blocked[neighbors(int(x), obs.corners, size)] = True",
+     "        pass", TP),
+    ("prob: одинаковые не делятся на k!", P, "        logw -= np.array([math.lgamma(k + 1) for k in rem[:, t]])",
+     "        pass", TP),
+    ("prob: касание в выборке не проверяется", P, "            F[rows] |= Hl[choice]", "            F[rows] |= Cl[choice]", TP),
+    ("prob: выборка без весов", P, "            logw[rows] += np.log(tot)\n\n    if not alive",
+     "            pass\n\n    if not alive", TP),
+    ("prob: наибольшая не выбирается", P, "    cand = unknown[vals >= top - 1e-9 * max(top, 1e-12)]", "    cand = unknown", TP),
+    ("agents: добивание без линии", A, "    if len(group) == 1:", "    if True:", TA),
+    ("agents: шахматка не та", A, "== self.parity]", "!= self.parity]", TA),
+    ("agents: диагонали и с углами", A, "for x in ([] if obs.corners else obs.hits()):", "for x in obs.hits():", TA),
+    ("agents: сильный стреляет в известное", A, "        p[[i for i, v in enumerate(obs.grid) if v != UNKNOWN]] = 0.0\n",
+     "", TA),
+    ("honesty: наблюдение видит корабли", B, "        return Observation(tuple(self.view), self.remaining(), self.rules.corners, self.size)",
+     "        return Observation(tuple(2 if i in self.owner and v == 0 else v for i, v in enumerate(self.view)), "
+     "self.remaining(), self.rules.corners, self.size)", TH),
+]
+H = "game/ai/habits.py"
+TB2 = "tests/test_habits.py"
+MUTANTS += [
+    ("habits: флот не пишется", H, "            self.cells[len(s)][list(s)] += 1", "            pass", TB2),
+    ("habits: без сглаживания", H, "f = (_blur(self.cells[L]) + SMOOTH * b) / (self.games + SMOOTH)",
+     "f = (self.cells[L] + 0.01 * b) / (self.games + 0.01)", TB2),
+    ("placement: самый рискованный", "game/ai/placement.py", 'order = np.argsort([fleet_risk(f, risk) for f in fleets], kind="stable")',
+     'order = np.argsort([-fleet_risk(f, risk) for f in fleets], kind="stable")', TB2),
+    ("placement: стрельбу игрока не видит", "game/ai/placement.py", "risk = risk + SHOT_WEIGHT * habits.shot_map() * 4",
+     "risk = risk", TB2),
+]

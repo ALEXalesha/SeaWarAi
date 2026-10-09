@@ -4,6 +4,8 @@
 второй флот и второй стрелок - [seed, i, 2] и [seed, i, 3]. Любую партию можно пересчитать
 отдельно и сверить с паспортом.
 """
+from functools import lru_cache
+
 import numpy as np
 
 from game.ai.agents import make_agent
@@ -26,11 +28,37 @@ def make_fleet(placer, rng, rules=Rules(), habits=None):
         return random_fleet(rng, rules)
     if placer == "ai":
         return ai_fleet(rng, rules, habits)
+    if placer == "edge":
+        return edge_lover_fleet(rng, rules)
     raise ValueError(placer)
 
 
+def edge_lover_fleet(rng, rules=Rules(), tries=40):
+    """Игрок с привычкой ставить к краям: из tries случайных расстановок берёт ту, где
+    больше всего клеток у края поля."""
+    best = None
+    for _ in range(tries):
+        f = random_fleet(rng, rules)
+        score = sum(1 for s in f for x in s if x // 10 in (0, 9) or x % 10 in (0, 9))
+        if best is None or score > best[0]:
+            best = (score, f)
+    return best[1]
+
+
+@lru_cache(maxsize=4)
+def learned_habits(seed, games, rules=Rules()):
+    """Привычки, выученные по games расстановкам игрока, любящего края (одни на процесс)."""
+    from game.ai.habits import Habits
+    h = Habits()
+    rng = np.random.default_rng([int(seed), 999])
+    for _ in range(games):
+        h.record_fleet(edge_lover_fleet(rng, rules), save=False)
+    return h
+
+
 def shots_to_sink(level, seed, i, rules=Rules(), placer="random", samples=None, habits=None):
-    """Выстрелов уровня level до гибели всего флота."""
+    """Выстрелов уровня level до гибели всего флота. habits - привычки, которые знает
+    сильный стрелок."""
     r_fleet, r_shoot, _, _ = rngs(seed, i)
     fleet = make_fleet(placer, r_fleet, rules)
     kw = {} if samples is None else {"samples": samples}

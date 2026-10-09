@@ -4,7 +4,8 @@
 - новичок: случайная неизвестная клетка; ранил - добивает (соседи попадания, потом по линии);
 - средний: «охота и добивание»: охота по шахматному шагу, добивание по линии, клетки по
   диагонали от попадания пропускает (там корабля быть не может);
-- сильный: карта вероятностей (prob.probability_map) с привычками игрока.
+- сильный: карта вероятностей (prob.probability_map) с привычками игрока; раненый корабль
+  добивает в клетке с наибольшей вероятностью среди тех, где он может продолжаться.
 
 think(obs, rng) - «Мысли ИИ»: вес каждой клетки, куда стрелок хочет выстрелить (0..1).
 """
@@ -99,8 +100,8 @@ class MediumAgent(NoviceAgent):
                     if 0 <= r + dr < size and 0 <= c + dc < size:
                         banned.add((r + dr) * size + c + dc)
         unknown = [x for x in obs.unknown() if x not in banned]
-        smallest = min(obs.remaining) if obs.remaining else 1
-        if smallest >= 2:
+        largest = max(obs.remaining) if obs.remaining else 1
+        if largest >= 2:                     # пока есть корабли от двух палуб - через клетку
             even = [x for x in unknown if (x // size + x % size) % 2 == self.parity]
             if even:
                 return even
@@ -129,7 +130,19 @@ class StrongAgent:
         return p
 
     def choose(self, obs, rng):
-        return prob.best_cell(self.think(obs, rng), obs, rng)
+        """Клетка с наибольшей вероятностью. Есть раненый корабль - только среди клеток, где
+        он может продолжаться: по силе то же самое (56.05 против 56.13 выстрела на 150
+        партиях), но ИИ не стреляет через клетку от раненого, как будто его не заметил."""
+        p = self.think(obs, rng)
+        for g in hit_groups(obs):
+            cells = finish_cells(obs, g)
+            if cells:
+                mask = np.zeros_like(p)
+                mask[cells] = 1.0
+                if (p * mask).max() > 0:
+                    p = p * mask
+                break
+        return prob.best_cell(p, obs, rng)
 
 
 def make_agent(level, habits=None, samples=prob.DEFAULT_SAMPLES, parity=0):

@@ -182,3 +182,30 @@ def test_map_is_deterministic_for_seed():
     a, _ = mc_map(o, np.random.default_rng(11), 300)
     b, _ = mc_map(o, np.random.default_rng(11), 300)
     assert np.array_equal(a, b)
+
+
+def test_sunk_ship_blocks_neighbours_even_without_marks():
+    """Наблюдение собрано вручную, клетки вокруг потопленного не отмечены - всё равно пусто."""
+    grid = [UNKNOWN] * 100
+    grid[44] = grid[45] = SUNK
+    o = Observation(tuple(grid), (3, 1))
+    p, _ = exact_map(o) if estimate_count(o) < 50000 else (None, 0)
+    q, _ = mc_map(o, np.random.default_rng(0), 2000)
+    for x in (33, 34, 35, 36, 43, 46, 53, 54, 55, 56):
+        assert p[x] == 0 and q[x] == 0, x
+
+
+def test_identical_ships_after_hits_weigh_right():
+    """Попадание накрыто трёхпалубным или одним из двух двухпалубных - и во второй фазе
+    выборки остаётся разное число одинаковых кораблей. Без деления веса на k! выборка
+    ошибается на 0.06 (проверено), с делением - меньше 0.01. (Однопалубный попадание не
+    накрывает никогда: он был бы уже потоплен.)"""
+    grid = [MISS] * 100
+    for x in range(100):
+        if x // 10 in (2, 3, 4) and x % 10 < 8:
+            grid[x] = UNKNOWN
+    grid[33] = HIT
+    o = Observation(tuple(grid), (3, 2, 2))
+    want, _ = exact_map(o)
+    got, _ = mc_map(o, np.random.default_rng(2), 20000)
+    assert np.abs(got - want).max() < 0.02
