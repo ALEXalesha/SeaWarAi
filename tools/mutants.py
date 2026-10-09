@@ -17,7 +17,7 @@ MUTANTS = [
     ("rules: касание не проверяется", R, "return not (set(ship) & taken)", "return True", TR),
     ("rules: состав не проверяется", R,
      "if sorted((len(s) for s in ships), reverse=True) != sorted(fleet, reverse=True):", "if False:", TR),
-    ("rules: случайная касается", R, "            taken |= halo(s, rules.corners, size)", "            taken |= set(s)", TR),
+    ("rules: случайная касается", R, "            taken |= hb", "            taken |= b", TR),
     ("rules: флот другой", R, "FLEET = (4, 3, 3, 2, 2, 2, 1, 1, 1, 1)", "FLEET = (4, 3, 3, 2, 2, 1, 1, 1, 1, 1)", TR),
     ("battle: попадание мимо", B, "if i is None:", "if i is None or i == 0:", TB),
     ("battle: повтор выстрела", B, "if self.view[cell] != UNKNOWN:", "if self.view[cell] == SUNK:", TB),

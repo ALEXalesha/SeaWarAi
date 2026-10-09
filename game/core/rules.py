@@ -8,6 +8,7 @@
 занято только 4 соседа - сторонами касаться нельзя по-прежнему.
 """
 from dataclasses import dataclass
+from functools import lru_cache
 
 SIZE = 10
 FLEET = (4, 3, 3, 2, 2, 2, 1, 1, 1, 1)
@@ -122,19 +123,25 @@ def valid_fleet(ships, rules=Rules(), fleet=FLEET, size=SIZE):
     return not fleet_problems(ships, rules, fleet, size)
 
 
+@lru_cache(maxsize=32)
+def placement_bits(length, size=SIZE, corners=False):
+    """Места корабля с битами клеток и битами кольца вокруг (для быстрых проверок)."""
+    return [(p, sum(1 << x for x in p), sum(1 << x for x in halo(p, corners, size)))
+            for p in placements(length, size)]
+
+
 def random_fleet(rng, rules=Rules(), fleet=FLEET, size=SIZE, attempts=1000):
     """Случайная расстановка: корабли по убыванию длины, каждый на случайное свободное
     место; тупик - начать заново. rng - numpy.random.Generator."""
-    by_len = {L: placements(L, size) for L in set(fleet)}
     for _ in range(attempts):
-        ships, taken = [], set()
+        ships, taken = [], 0
         for L in sorted(fleet, reverse=True):
-            free = [p for p in by_len[L] if not (set(p) & taken)]
+            free = [(p, b, hb) for p, b, hb in placement_bits(L, size, rules.corners) if not b & taken]
             if not free:
                 break
-            s = free[int(rng.integers(len(free)))]
+            s, b, hb = free[int(rng.integers(len(free)))]
             ships.append(s)
-            taken |= halo(s, rules.corners, size)
+            taken |= hb
         else:
             return ships
     raise RuntimeError("не удалось расставить флот")
