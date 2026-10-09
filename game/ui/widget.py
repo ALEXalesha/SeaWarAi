@@ -1,0 +1,867 @@
+"""Виджет игры (create_widget по контракту): меню, расстановка, бой, статистика, настройки.
+
+Окно ему даёт оболочка (aikit.run_standalone или ИИ-Игротека). Тема и язык приходят из
+ctx и меняются на лету по ctx.changed. Файлы - только в ctx.data_dir: settings.json,
+habits.json (привычки игрока), records.json (меньше всего выстрелов до победы).
+"""
+import gc
+import json
+import os
+import random
+
+import numpy as np
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
+                               QLabel, QListWidget, QScrollArea, QSlider, QStackedWidget, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
+
+from aikit import settings as st
+from aikit import theme
+from aikit.storage import is_int, load_json, save_json
+from aikit.widgets import Combo, button, card, label, restyle, segmented
+from game.ai.agents import LEVELS
+from game.ai.habits import Habits
+from game.ai.prob import uniform_fleet
+from game.core.rules import Rules, cell_name, valid_fleet
+from game.ui.ai_thread import AiController
+from game.ui.board import BoardWidget, SetupBoard
+from game.ui.i18n import translator
+from game.ui.session import Session
+from game.version import VERSION
+
+SCHEMA = {
+    "level": ("medium", st.choice(*LEVELS)),
+    "mode": ("play", st.choice("play", "demo")),
+    "corners": (False, st.boolean()),
+    "salvo": (False, st.boolean()),
+    "show_thoughts": (False, st.boolean()),
+    "anim_ms": (450, st.int_range(0, 1200)),
+    "delay_ms": (500, st.int_range(0, 3000)),
+}
+PASSPORT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "seawar-passport.json")
+
+
+def page_widget():
+    w = QWidget()
+    w.setObjectName("page")
+    w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    return w
+
+
+def scroll_page(margins=(26, 22, 26, 22)):
+    """Страница с прокруткой: (внешний виджет, колонка для содержимого)."""
+    outer = QWidget()
+    lay = QVBoxLayout(outer)
+    lay.setContentsMargins(0, 0, 0, 0)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    lay.addWidget(scroll)
+    body = page_widget()
+    scroll.setWidget(body)
+    col = QVBoxLayout(body)
+    col.setContentsMargins(*margins)
+    col.setSpacing(14)
+    return outer, col
+
+
+def load_passport():
+    with open(PASSPORT, encoding="utf-8") as f:
+        return json.load(f)
+
+
+# --- меню ---
+
+
+class MenuPage(QWidget):
+    def __init__(self, gw):
+        super().__init__()
+        self.gw = gw
+        self.setObjectName("page")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        outer = QVBoxLayout(self)
+        outer.addStretch(2)
+        col = QVBoxLayout()
+        col.setSpacing(10)
+        col.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        from game.ui.icon import render
+        self.logo = QLabel()
+        self.logo.setPixmap(QPixmap.fromImage(render(104)))
+        col.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.title = label("", "title")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        col.addWidget(self.title)
+        self.sub = label("", "muted", wrap=True)
+        self.sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.sub.setFixedWidth(620)
+        col.addWidget(self.sub, 0, Qt.AlignmentFlag.AlignHCenter)
+        col.addSpacing(12)
+        box = card()
+        box.setMaximumWidth(660)
+        grid = QGridLayout(box)
+        grid.setContentsMargins(22, 18, 22, 18)
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(12)
+        self.captions = {}
+
+        def row(r, key, widget):
+            cap = label("", "muted")
+            self.captions[key] = cap
+            grid.addWidget(cap, r, 0)
+            grid.addWidget(widget, r, 1)
+
+        w, self.level_buttons = segmented({lv: "" for lv in LEVELS}, lambda v: gw.change("level", v))
+        row(0, "level", w)
+        w, self.mode_buttons = segmented({"play": "", "demo": ""}, lambda v: gw.change("mode", v))
+        row(1, "mode", w)
+        w, self.touch_buttons = segmented({False: "", True: ""}, lambda v: gw.change("corners", v))
+        row(2, "touch", w)
+        w, self.shots_buttons = segmented({False: "", True: ""}, lambda v: gw.change("salvo", v))
+        row(3, "shots_rule", w)
+        col.addWidget(box, 0, Qt.AlignmentFlag.AlignHCenter)
+        col.addSpacing(8)
+        self.play_button = button("", "menuPrimary", gw.play_clicked)
+        self.stats_button = button("", "menu", lambda: gw.show_page("stats"))
+        self.settings_button = button("", "menu", lambda: gw.show_page("settings"))
+        for b in (self.play_button, self.stats_button, self.settings_button):
+            col.addWidget(b, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addLayout(col)
+        outer.addStretch(3)
+        self.foot = label("", "hint")
+        self.foot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(self.foot)
+
+    def sync(self, s):
+        self.level_buttons[s["level"]].setChecked(True)
+        self.mode_buttons[s["mode"]].setChecked(True)
+        self.touch_buttons[s["corners"]].setChecked(True)
+        self.shots_buttons[s["salvo"]].setChecked(True)
+
+    def retranslate(self):
+        t = self.gw.t
+        self.title.setText(t("app_title"))
+        self.sub.setText(t("app_sub"))
+        for key, cap in self.captions.items():
+            cap.setText(t(key))
+        for k, b in self.level_buttons.items():
+            b.setText(t(k))
+        for k, b in self.mode_buttons.items():
+            b.setText(t("mode_" + k))
+        self.touch_buttons[False].setText(t("touch_strict"))
+        self.touch_buttons[True].setText(t("touch_corners"))
+        self.shots_buttons[False].setText(t("shots_single"))
+        self.shots_buttons[True].setText(t("shots_salvo"))
+        self.play_button.setText(t("play"))
+        self.stats_button.setText(t("stats"))
+        self.settings_button.setText(t("settings"))
+        self.foot.setText(t("footer", v=VERSION))
+        self.sync(self.gw.settings)
+
+
+# --- расстановка ---
+
+
+class SetupPage(QWidget):
+    def __init__(self, gw):
+        super().__init__()
+        self.gw = gw
+        self.setObjectName("page")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        col = QVBoxLayout(self)
+        col.setContentsMargins(26, 20, 26, 20)
+        col.setSpacing(10)
+        self.heading = label("", "heading")
+        col.addWidget(self.heading)
+        self.hint = label("", "muted", wrap=True)
+        col.addWidget(self.hint)
+        self.board = SetupBoard()
+        self.board.changed.connect(self.on_changed)
+        col.addWidget(self.board, 1)
+        bottom = QHBoxLayout()
+        self.status = label("", "section")
+        bottom.addWidget(self.status)
+        bottom.addStretch(1)
+        self.random_button = button("", None, gw.random_setup)
+        self.clear_button = button("", None, self.board.clear)
+        self.menu_button = button("", None, lambda: gw.show_page("menu"))
+        self.battle_button = button("", "primary", gw.start_battle)
+        for b in (self.random_button, self.clear_button, self.menu_button, self.battle_button):
+            bottom.addWidget(b)
+        col.addLayout(bottom)
+
+    def on_changed(self):
+        t = self.gw.t
+        left = sum(1 for s in self.board.placed if s is None)
+        ok = left == 0 and valid_fleet(self.board.fleet(), self.board.rules)
+        self.status.setText(t("setup_ready") if ok else t("setup_left", n=left))
+        self.battle_button.setEnabled(ok)
+        # выключенная «основная» кнопка выглядит как включённая - красится, только когда можно
+        restyle(self.battle_button, "primary" if ok else "")
+
+    def retranslate(self):
+        t = self.gw.t
+        self.heading.setText(t("setup_title"))
+        corners = self.gw.settings["corners"]
+        self.hint.setText(t("setup_hint", corners=t("setup_hint_corners" if corners else "setup_hint_strict")))
+        self.random_button.setText(t("random"))
+        self.clear_button.setText(t("clear"))
+        self.menu_button.setText(t("menu"))
+        self.battle_button.setText(t("battle"))
+        self.on_changed()
+
+
+# --- бой ---
+
+
+class PlayPage(QWidget):
+    def __init__(self, gw):
+        super().__init__()
+        self.gw = gw
+        self.setObjectName("page")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(14)
+        boards = QHBoxLayout()
+        boards.setSpacing(10)
+        self.own = BoardWidget()
+        self.enemy = BoardWidget()
+        self.enemy.cellClicked.connect(gw.on_cell)
+        boards.addWidget(self.own, 1)
+        boards.addWidget(self.enemy, 1)
+        root.addLayout(boards, 1)
+
+        side = card()
+        side.setFixedWidth(290)
+        outer = QVBoxLayout(side)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }")
+        outer.addWidget(scroll)
+        body = QWidget()
+        scroll.setWidget(body)
+        col = QVBoxLayout(body)
+        col.setContentsMargins(16, 14, 16, 14)
+        col.setSpacing(6)
+        self.heading = label("", "section", wrap=True)
+        col.addWidget(self.heading)
+        self.status = label("", "status", wrap=True)
+        col.addWidget(self.status)
+        self.substatus = label("", "muted", wrap=True)
+        self.substatus.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        col.addWidget(self.substatus)
+        self.counts = label("", "hint", wrap=True)
+        col.addWidget(self.counts)
+        self.thoughts_box = QCheckBox("")
+        self.thoughts_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.thoughts_box.toggled.connect(lambda on: gw.change("show_thoughts", on))
+        col.addWidget(self.thoughts_box)
+        self.thoughts_hint = label("", "hint", wrap=True)
+        col.addWidget(self.thoughts_hint)
+        self.best = label("", "hint", wrap=True)
+        col.addWidget(self.best)
+        self.log_caption = label("", "muted")
+        col.addWidget(self.log_caption)
+        self.log = QListWidget()
+        self.log.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.log.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.log.setMinimumHeight(120)
+        col.addWidget(self.log, 1)
+        self.pause_button = button("", None, gw.toggle_pause)
+        col.addWidget(self.pause_button)
+        last = QHBoxLayout()
+        self.again_button = button("", "primary", gw.play_clicked)
+        self.menu_button = button("", None, lambda: gw.show_page("menu"))
+        last.addWidget(self.again_button, 1)
+        last.addWidget(self.menu_button, 1)
+        col.addLayout(last)
+        root.addWidget(side)
+        self.side = side
+
+    def fit_labels(self):
+        """Подписи с переносом - по своей ширине (ловушка qt-wrapped-label-height: только минимум)."""
+        for w in self.side.findChildren(QLabel):
+            if w.wordWrap() and w.width() > 0:
+                w.setMinimumHeight(w.heightForWidth(w.width()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.fit_labels()
+
+    def retranslate(self):
+        t = self.gw.t
+        self.thoughts_box.setText(t("thoughts"))
+        self.log_caption.setText(t("log"))
+        self.again_button.setText(t("again"))
+        self.menu_button.setText(t("menu"))
+        self.pause_button.setText(t("resume") if self.gw.paused else t("pause"))
+        self.fit_labels()
+
+
+# --- статистика ---
+
+
+def table_widget(cols):
+    tw = QTableWidget(0, cols)
+    tw.verticalHeader().setVisible(False)
+    tw.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    tw.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+    tw.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    tw.setShowGrid(False)
+    tw.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    tw.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    header = tw.horizontalHeader()
+    header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+    header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+    header.setHighlightSections(False)
+    return tw
+
+
+def fit_height(tw):
+    tw.resizeRowsToContents()
+    tw.setFixedHeight(tw.horizontalHeader().height() + sum(tw.rowHeight(r) for r in range(tw.rowCount())) + 4)
+
+
+def item(text, align=Qt.AlignmentFlag.AlignCenter):
+    it = QTableWidgetItem(text)
+    it.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
+    return it
+
+
+class StatsPage(QWidget):
+    def __init__(self, gw):
+        super().__init__()
+        self.gw = gw
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        outer, col = scroll_page()
+        lay.addWidget(outer)
+        top = QHBoxLayout()
+        self.heading = label("", "heading")
+        top.addWidget(self.heading)
+        top.addStretch(1)
+        self.menu_button = button("", None, lambda: gw.show_page("menu"))
+        top.addWidget(self.menu_button)
+        col.addLayout(top)
+        mine = card()
+        mc = QVBoxLayout(mine)
+        mc.setContentsMargins(18, 14, 18, 14)
+        self.mine_title = label("", "section")
+        mc.addWidget(self.mine_title)
+        self.table = table_widget(6)
+        mc.addWidget(self.table)
+        col.addWidget(mine)
+        pc = card()
+        pl = QVBoxLayout(pc)
+        pl.setContentsMargins(18, 14, 18, 14)
+        self.pass_title = label("", "section")
+        self.pass_text = label("", "muted", wrap=True)
+        self.checks = table_widget(3)
+        self.pass_foot = label("", "hint", wrap=True)
+        for w in (self.pass_title, self.pass_text, self.checks, self.pass_foot):
+            pl.addWidget(w)
+        col.addWidget(pc)
+        col.addStretch(1)
+
+    def refresh(self):
+        t = self.gw.t
+        self.heading.setText(t("stats_title"))
+        self.menu_button.setText(t("menu"))
+        self.mine_title.setText(t("your_games"))
+        self.table.setHorizontalHeaderLabels([t(k) for k in ("col_setup", "col_games", "col_wins", "col_losses",
+                                                               "col_streak", "col_best")])
+        rows = [(lv, v) for lv in LEVELS for v in ("classic", "salvo")]
+        self.table.setRowCount(len(rows))
+        stats = self.gw.ctx.stats
+        records = self.gw.records()
+        for r, (lv, v) in enumerate(rows):
+            key = f"{lv}/{v}"
+            e = stats.entry(key)
+            self.table.setItem(r, 0, item(f"{t(lv)} · {t(v)}", Qt.AlignmentFlag.AlignLeft))
+            for c, f in enumerate(("games", "wins", "losses", "best_streak"), start=1):
+                self.table.setItem(r, c, item(str(e[f])))
+            self.table.setItem(r, 5, item(str(records[key]) if key in records else "-"))
+        fit_height(self.table)
+        self.pass_title.setText(t("passport"))
+        try:
+            pp = load_passport()
+            shots = pp["checks"]["shots"]
+        except (OSError, ValueError, KeyError):
+            self.pass_text.setText(t("not_measured"))
+            self.checks.hide()
+            self.pass_foot.hide()
+            return
+        n = min(v["games"] for v in shots.values())
+        self.pass_text.setText(t("passport_text", n=f"{n:,}".replace(",", " ")))
+        self.checks.setHorizontalHeaderLabels([t("col_level"), t("col_mean"), t("col_median")])
+        self.checks.setRowCount(len(LEVELS))
+        for r, lv in enumerate(LEVELS):
+            s = shots.get(lv, {})
+            self.checks.setItem(r, 0, item(t(lv), Qt.AlignmentFlag.AlignLeft))
+            self.checks.setItem(r, 1, item(f"{s.get('mean', 0):.1f}"))
+            self.checks.setItem(r, 2, item(f"{s.get('median', 0):g}"))
+        fit_height(self.checks)
+        self.checks.show()
+        foot = []
+        duel = pp["checks"].get("duel")
+        if duel:
+            foot.append(t("duel_text", p=f"{100 * duel['score']:.1f}", n=duel["games"]))
+        place = pp["checks"].get("placement", {}).get("strong")
+        if place:
+            foot.append(t("placement_text", a=f"{place['mean']:.1f}", b=f"{place['random_mean']:.1f}"))
+        self.pass_foot.setText(" ".join(foot))
+        self.pass_foot.setVisible(bool(foot))
+
+
+# --- настройки ---
+
+
+class SettingsPage(QWidget):
+    def __init__(self, gw):
+        super().__init__()
+        self.gw = gw
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        outer, col = scroll_page()
+        lay.addWidget(outer)
+        top = QHBoxLayout()
+        self.heading = label("", "heading")
+        top.addWidget(self.heading)
+        top.addStretch(1)
+        self.menu_button = button("", None, lambda: gw.show_page("menu"))
+        top.addWidget(self.menu_button)
+        col.addLayout(top)
+        box = card()
+        box.setMaximumWidth(760)
+        self.grid = QGridLayout(box)
+        self.grid.setContentsMargins(22, 18, 22, 18)
+        self.grid.setHorizontalSpacing(22)
+        self.grid.setVerticalSpacing(16)
+        self.grid.setColumnStretch(0, 1)
+        self.rows = {}
+        self.theme_combo = Combo()
+        for k in theme.THEMES:
+            self.theme_combo.addItem("", k)
+        self.theme_combo.currentIndexChanged.connect(lambda i: gw.ctx.set_theme(self.theme_combo.itemData(i)))
+        self._row("theme", self.theme_combo)
+        self.lang_combo = Combo()
+        self.lang_combo.addItem("Русский", "ru")
+        self.lang_combo.addItem("English", "en")
+        self.lang_combo.currentIndexChanged.connect(lambda i: gw.ctx.set_lang(self.lang_combo.itemData(i)))
+        self._row("language", self.lang_combo)
+        self.volume = QSlider(Qt.Orientation.Horizontal)
+        self.volume.setRange(0, 100)
+        self.volume.setValue(gw.ctx.sound.volume)
+        self.volume.valueChanged.connect(gw.ctx.set_volume)
+        self._row("volume", self.volume)
+        self.anim = QSlider(Qt.Orientation.Horizontal)
+        self.anim.setRange(0, 1200)
+        self.anim.valueChanged.connect(lambda v: gw.change("anim_ms", int(v)))
+        self._row("anim", self.anim)
+        self.delay = QSlider(Qt.Orientation.Horizontal)
+        self.delay.setRange(0, 3000)
+        self.delay.valueChanged.connect(lambda v: gw.change("delay_ms", int(v)))
+        self._row("delay", self.delay)
+        self.habits_button = button("", None, gw.forget_habits)
+        self._row("habits", self.habits_button)
+        col.addWidget(box)
+        self.note = label("", "hint")
+        col.addWidget(self.note)
+        col.addStretch(1)
+
+    def _row(self, key, widget):
+        r = len(self.rows)
+        names = QVBoxLayout()
+        names.setSpacing(2)
+        title = label("", "section")
+        hint = label("", "hint", wrap=True)
+        names.addWidget(title)
+        names.addWidget(hint)
+        self.grid.addLayout(names, r, 0)
+        self.grid.addWidget(widget, r, 1)
+        self.rows[key] = (title, hint)
+
+    def retranslate(self):
+        t = self.gw.t
+        self.heading.setText(t("settings_title"))
+        self.menu_button.setText(t("menu"))
+        for key, (title, hint) in self.rows.items():
+            title.setText(t(key))
+            hint.setText(t(key + "_hint", n=self.gw.habits.games) if key == "habits" else t(key + "_hint"))
+            hint.setVisible(bool(hint.text()))
+        for i, k in enumerate(theme.THEMES):
+            self.theme_combo.setItemText(i, t(k))
+        self.habits_button.setText(t("habits_reset"))
+        self.note.setText(t("saved_note"))
+        self.sync()
+
+    def sync(self):
+        g = self.gw
+        for combo, value in ((self.theme_combo, g.ctx.theme), (self.lang_combo, g.ctx.lang)):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(combo.findData(value))
+            combo.blockSignals(False)
+        for w, value in ((self.anim, g.settings["anim_ms"]), (self.delay, g.settings["delay_ms"])):
+            w.blockSignals(True)
+            w.setValue(value)
+            w.blockSignals(False)
+        self.rows["habits"][1].setText(g.t("habits_hint", n=g.habits.games))
+        self.habits_button.setEnabled(g.habits.games > 0 or g.habits.shot_games > 0)
+
+
+# --- сам виджет игры ---
+
+
+class GameWidget(QWidget):
+    def __init__(self, ctx):
+        super().__init__()
+        gc.freeze()        # полный проход сборщика посреди расчёта ИИ держит GIL (урок ChessCheckersAi)
+        self.ctx = ctx
+        self.t = translator(ctx.lang)
+        self.settings = st.Settings(SCHEMA, ctx.file("settings.json"))
+        self.habits = Habits(ctx.file("habits.json"))
+        self.session = None
+        self.token = 0
+        self.paused = False
+        self.thoughts = None           # {'map', 'method', 'board'} - на каком поле
+        self.last = {0: -1, 1: -1}     # последний выстрел по полю игрока
+        self.rng = random.Random()
+        self.ai = AiController(self)
+        self.ai.ready.connect(self.on_ai)
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self._step)
+        self.stack = QStackedWidget(self)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.stack)
+        self.menu = MenuPage(self)
+        self.setup = SetupPage(self)
+        self.play = PlayPage(self)
+        self.stats = StatsPage(self)
+        self.settings_page = SettingsPage(self)
+        self.pages = {"menu": self.menu, "setup": self.setup, "play": self.play, "stats": self.stats,
+                      "settings": self.settings_page}
+        for p in self.pages.values():
+            self.stack.addWidget(p)
+        for keys, slot in (("Escape", lambda: self.show_page("menu")), ("N", self.play_clicked),
+                           ("R", self.random_setup)):
+            sc = QShortcut(QKeySequence(keys), self)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(slot)
+        ctx.changed.connect(self.on_ctx_changed)
+        self.apply_anim()
+        self.apply_theme()
+        self.retranslate()
+        self.show_page("menu")
+
+    def minimumSizeHint(self):
+        return QSize(900, 620)
+
+    # --- общее ---
+
+    def rules(self):
+        return Rules(corners=self.settings["corners"], salvo=self.settings["salvo"])
+
+    def current_page(self):
+        w = self.stack.currentWidget()
+        return next(k for k, p in self.pages.items() if p is w)
+
+    def show_page(self, name):
+        if name != "play":
+            self._invalidate()
+        self.stack.setCurrentWidget(self.pages[name])
+        if name == "stats":
+            self.stats.refresh()
+        elif name == "settings":
+            self.settings_page.sync()
+        elif name == "menu":
+            self.menu.sync(self.settings)
+        elif name == "setup":
+            self.setup.board.set_rules(self.rules())
+            if not valid_fleet(self.setup.board.fleet(), self.rules()) and self.setup.board.complete():
+                self.setup.board.clear()
+            self.setup.retranslate()
+
+    def change(self, key, value):
+        if self.settings[key] == value:
+            return
+        self.settings.set(key, value)
+        if key in ("level", "mode", "corners", "salvo"):
+            self.menu.sync(self.settings)
+        if key == "corners":
+            self.setup.board.set_rules(self.rules())
+            self.setup.retranslate()
+        elif key in ("anim_ms",):
+            self.apply_anim()
+        elif key == "show_thoughts":
+            self.thoughts = None
+            self.after_change()
+
+    def apply_anim(self):
+        for b in (self.play.own, self.play.enemy):
+            b.anim_ms = self.settings["anim_ms"]
+
+    def on_ctx_changed(self, what):
+        if what == "theme":
+            self.apply_theme()
+        elif what == "lang":
+            self.t = translator(self.ctx.lang)
+            self.retranslate()
+
+    def apply_theme(self):
+        c = theme.palette(self.ctx.theme)
+        for b in (self.play.own, self.play.enemy, self.setup.board):
+            b.set_theme(self.ctx.theme, self.ctx.lang)
+        for combo in self.findChildren(Combo):
+            combo.set_arrow_color(c["text"])
+        self.update()
+
+    def retranslate(self):
+        for b in (self.play.own, self.play.enemy, self.setup.board):
+            b.set_theme(self.ctx.theme, self.ctx.lang)
+        self.menu.retranslate()
+        self.setup.retranslate()
+        self.play.retranslate()
+        self.settings_page.retranslate()
+        if self.current_page() == "stats":
+            self.stats.refresh()
+        if self.session is not None:
+            self.refresh()
+
+    def shutdown(self):
+        """Окно закрывается: таймеры стоп, расчёты ИИ остановить и дождаться (не дольше 2 с)."""
+        self._invalidate()
+        for b in (self.play.own, self.play.enemy):
+            b.stop()
+        return self.ai.shutdown(2000)
+
+    def _invalidate(self):
+        self.token += 1
+        self.timer.stop()
+        self.ai.cancel()
+
+    def forget_habits(self):
+        self.habits.reset()
+        self.settings_page.sync()
+
+    def records(self):
+        raw = load_json(self.ctx.file("records.json"))
+        if not isinstance(raw, dict):
+            return {}
+        return {k: v for k, v in raw.items() if isinstance(k, str) and is_int(v) and v > 0}
+
+    # --- партия ---
+
+    def play_clicked(self):
+        if self.settings["mode"] == "demo":
+            self.start_battle()
+        else:
+            self.show_page("setup")
+
+    def random_setup(self):
+        if self.current_page() != "setup":
+            return
+        rng = np.random.default_rng(self.rng.randrange(2 ** 31))
+        self.setup.board.set_fleet(uniform_fleet(rng, self.settings["corners"]))
+
+    def start_battle(self, seed=None, fleet=None):
+        s = self.settings
+        mode = s["mode"]
+        if seed is None:
+            seed = self.rng.randrange(2 ** 31)
+        if mode == "play":
+            fleet = fleet if fleet is not None else self.setup.board.fleet()
+            if not valid_fleet(fleet, self.rules()):
+                self.show_page("setup")
+                return
+        self.session = Session(fleet, s["level"], self.rules(), seed, mode,
+                               self.habits if s["level"] == "strong" else None, first=seed % 2)
+        self.paused = False
+        self.thoughts = None
+        self.last = {0: -1, 1: -1}
+        self.play.log.clear()
+        for b in (self.play.own, self.play.enemy):
+            b.stop()
+        self._invalidate()
+        self.stack.setCurrentWidget(self.play)
+        self.play.retranslate()
+        self.after_change()
+
+    def on_cell(self, cell):
+        s = self.session
+        if s is None or not s.human_turn() or cell not in s.match.legal():
+            return
+        self._fire(cell)
+
+    def _fire(self, cell):
+        s = self.session
+        p, shot = s.fire(cell)
+        target = 1 - p
+        self.last[target] = cell
+        board = self.play.enemy if target == 1 else self.play.own
+        board.add_effect(cell, shot.result)
+        self.ctx.sound.play("move" if shot.result == "miss" else "capture")
+        self.play.log.insertItem(0, f"{self.names()[p]}: {cell_name(cell, self.ctx.lang)} - {self.t('res_' + shot.result)}")
+        if self.thoughts is not None and self.thoughts["board"] == target:
+            self.thoughts = None
+        self.after_change()
+
+    def names(self):
+        if self.session is not None and self.session.mode == "demo":
+            return [self.t("ai_n", n=1), self.t("ai_n", n=2)]
+        return [self.t("you"), self.t("ai")]
+
+    def after_change(self):
+        """После любого изменения партии: перерисовать, записать итог, запустить ИИ."""
+        self.token += 1
+        self.timer.stop()
+        self.ai.cancel()
+        s = self.session
+        if s is None:
+            return
+        self.refresh()
+        if s.over:
+            self._finish()
+            return
+        show = self.settings["show_thoughts"]
+        if s.human_turn():
+            if show and self.thoughts is None:      # куда ИИ хочет выстрелить по вашему полю
+                ai = 1 - s.human
+                self.ai.request_thoughts(self.token, s.obs(ai), s.level, self.rng.randrange(2 ** 31),
+                                         self._habits(), parity=ai)
+            return
+        if s.mode == "demo" and self.paused:
+            return
+        self.timer.start(self._delay())
+
+    def _habits(self):
+        s = self.session
+        return self.habits if (s is not None and s.mode == "play" and s.level == "strong") else None
+
+    def _delay(self):
+        busy = self.play.own.animating() or self.play.enemy.animating()
+        return max(self.settings["delay_ms"], (self.settings["anim_ms"] + 40) if busy else 0)
+
+    def _step(self):
+        s = self.session
+        if s is None or s.over or s.human_turn():
+            return
+        p = s.turn
+        self.ai.request_move(self.token, s.obs(p), s.level, self.rng.randrange(2 ** 31),
+                             self._habits(), parity=p)
+
+    def on_ai(self, token, kind, payload):
+        if token != self.token or self.session is None:
+            return
+        s = self.session
+        if isinstance(payload, Exception):
+            self.play.substatus.setText(self.t("error", e=payload))
+            return
+        if kind == "thoughts":
+            self.thoughts = {"map": payload["map"], "method": payload["method"], "board": s.human}
+            self.refresh()
+            return
+        if s.ai_turn() and payload["cell"] in s.match.legal():
+            if self.settings["show_thoughts"]:
+                self.thoughts = {"map": payload["map"], "method": payload["method"], "board": 1 - s.turn}
+            self._fire(payload["cell"])
+
+    def _finish(self):
+        s = self.session
+        outcome = s.outcome_for_human()
+        if outcome and not s.recorded:
+            self.ctx.stats.record(s.stats_key(), outcome)
+            if outcome == "win":
+                rec = self.records()
+                key = s.stats_key()
+                n = s.match.shots[s.human]
+                if key not in rec or n < rec[key]:
+                    rec[key] = n
+                    save_json(self.ctx.file("records.json"), rec)
+            s.record_habits(self.habits)
+            s.recorded = True
+            self.ctx.sound.play(outcome)
+            self.settings_page.sync()
+
+    def toggle_pause(self):
+        self.paused = not self.paused
+        self.play.pause_button.setText(self.t("resume") if self.paused else self.t("pause"))
+        if not self.paused:
+            self.after_change()
+        else:
+            self._invalidate()
+
+    # --- вид ---
+
+    def refresh(self):
+        s = self.session
+        if s is None:
+            return
+        t = self.t
+        pp = self.play
+        m = s.match
+        demo = s.mode == "demo"
+        names = self.names()
+        show = self.settings["show_thoughts"]
+        th = self.thoughts if show else None
+        for idx, board in ((0, pp.own), (1, pp.enemy)):
+            b = m.boards[idx]
+            open_ = demo or idx == s.human or s.over
+            ships = b.ships if open_ else [sh for sh, d in zip(b.ships, b.sunk) if d]
+            heat = th["map"] if th is not None and th["board"] == idx else None
+            board.set_state(b.view, ships, b.auto, heat, self.last[idx])
+        if demo:
+            pp.own.title, pp.enemy.title = t("fleet_n", n=1), t("fleet_n", n=2)
+        else:
+            pp.own.title, pp.enemy.title = t("your_fleet"), t("enemy_fleet")
+        pp.enemy.clickable = s.human_turn()
+        rules = t("shots_salvo") if s.rules.salvo else t("shots_single")
+        pp.heading.setText(f"{t('app_title')} · {t(s.level)} · {rules}")
+        if s.over:
+            outcome = s.outcome_for_human()
+            if outcome:
+                restyle(pp.status, "statusWin" if outcome == "win" else "statusLoss")
+                pp.status.setText(t(outcome))
+            else:
+                restyle(pp.status, "status")
+                pp.status.setText(t("winner_is", n=m.winner + 1))
+        else:
+            restyle(pp.status, "status")
+            if s.human_turn():
+                pp.status.setText(t("your_salvo", n=m.shots_left) if s.rules.salvo else t("your_turn"))
+            else:
+                pp.status.setText(t("ai_n_turn", n=m.turn + 1) if demo else t("ai_turn"))
+        if demo:
+            pp.substatus.setText(t("demo_text", level=t(s.level).lower()))
+            pp.counts.setText(t("shots_count_demo", a=m.shots[0], b=m.shots[1]))
+        else:
+            key = "play_text_salvo" if s.rules.salvo else "play_text"
+            pp.substatus.setText(t(key, level=t(s.level).lower()))
+            pp.counts.setText(t("shots_count", a=m.shots[0], b=m.shots[1]) + "\n"
+                              + t("afloat", a=len(m.boards[0].remaining()), b=len(m.boards[1].remaining())))
+        pp.thoughts_box.blockSignals(True)
+        pp.thoughts_box.setChecked(show)
+        pp.thoughts_box.blockSignals(False)
+        pp.thoughts_hint.setText(t("thoughts_hint_demo") if demo else t("thoughts_hint"))
+        pp.thoughts_hint.setVisible(show)
+        best = ""
+        if th is not None and not s.over:
+            hm = np.asarray(th["map"])
+            board = m.boards[th["board"]]
+            unknown = [i for i, v in enumerate(board.view) if v == 0]
+            if unknown and hm[unknown].max() > 0:
+                x = max(unknown, key=lambda i: hm[i])
+                if th["method"] in ("exact", "mc", "density"):
+                    best = t("best_here", cell=cell_name(x, self.ctx.lang), p=f"{100 * hm[x]:.0f}") + \
+                        f" · {t('thought_method_' + th['method'])}"
+        pp.best.setText(best)
+        pp.best.setVisible(bool(best))
+        pp.pause_button.setVisible(demo)
+        pp.fit_labels()
+        pp.own.update()
+        pp.enemy.update()

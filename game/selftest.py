@@ -1,7 +1,8 @@
 """Самопроверка без экрана: python main.py --selftest итог.txt.
 
 Нужна прежде всего собранному exe: он без консоли, поэтому итог пишется в файл. Данные
-игрока - во временной папке, его статистика не трогается.
+игрока - во временной папке, его статистика не трогается. Проверяется: правила (случайные
+партии), окно - ИИ отвечает на выстрелы бота, который играет за человека через окно.
 """
 import os
 import tempfile
@@ -38,6 +39,48 @@ def selftest(out_path):
                 legal = m.legal()
                 m.fire(legal[int(rng.integers(len(legal)))])
         lines.append(f"правила: 200 случайных партий без нарушений, {time.time() - started:.2f} с")
+
+        from PySide6.QtWidgets import QApplication
+
+        from aikit.host import make_window
+        from game import APP_NAME, GAME_INFO, create_widget
+        from game.ai.agents import make_agent
+        from game.ai.prob import uniform_fleet
+
+        app = QApplication.instance() or QApplication([])
+        window, ctx = make_window(GAME_INFO, create_widget, APP_NAME, root=home)
+        window.show()
+        g = window.game
+        g.change("anim_ms", 0)
+        g.change("delay_ms", 0)
+        for level, thoughts in (("strong", True), ("medium", False)):
+            g.change("level", level)
+            g.change("show_thoughts", thoughts)
+            g.start_battle(seed=7, fleet=uniform_fleet(np.random.default_rng(3)))
+            bot = make_agent("medium")
+            t0 = time.time()
+            while not g.session.over:
+                s = g.session
+                if s.human_turn():
+                    g.on_cell(bot.choose(s.obs(0), rng))
+                end = time.time() + 30
+                while g.session.ai_turn() and time.time() < end:
+                    app.processEvents()
+                    time.sleep(0.002)
+                if g.session.ai_turn():
+                    raise RuntimeError("ИИ не ответил за 30 с")
+                if time.time() - t0 > 180:
+                    raise RuntimeError("партия идёт дольше 3 минут")
+            image = window.grab().toImage()
+            if image.isNull() or image.width() < 300:
+                raise RuntimeError("окно не нарисовалось")
+            m = g.session.match
+            lines.append(f"ИИ {level}: выстрелов бот {m.shots[0]}, ИИ {m.shots[1]}, итог «{g.play.status.text()}», "
+                         f"кадр {image.width()}x{image.height()}, {time.time() - t0:.2f} с")
+        t0 = time.time()
+        window.close()
+        app.processEvents()
+        lines.append(f"окно закрыто за {time.time() - t0:.2f} с")
         lines.append("ИТОГ: работает")
     except Exception:  # noqa: BLE001 - любая ошибка должна попасть в файл
         lines.append("ИТОГ: ошибка")
