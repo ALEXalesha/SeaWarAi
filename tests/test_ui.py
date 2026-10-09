@@ -169,7 +169,11 @@ def test_thoughts_heat_on_own_board(app, win):
 
 def test_salvo_gives_shots_by_ships_afloat(app, win):
     g = win.game
-    g.change("salvo", True)
+    assert g.settings["salvo"] is False                  # классические правила по умолчанию
+    assert not hasattr(g.menu, "shots_buttons")         # залп - только в настройках
+    g.show_page("settings")
+    g.settings_page.salvo_box.click()
+    assert g.settings["salvo"] is True
     g.change("level", "novice")
     g.start_battle(seed=4, fleet=HAND)       # чётное зерно - первым ходит человек
     s = g.session

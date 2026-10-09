@@ -117,8 +117,6 @@ class MenuPage(QWidget):
         row(1, "mode", w)
         w, self.touch_buttons = segmented({False: "", True: ""}, lambda v: gw.change("corners", v))
         row(2, "touch", w)
-        w, self.shots_buttons = segmented({False: "", True: ""}, lambda v: gw.change("salvo", v))
-        row(3, "shots_rule", w)
         col.addWidget(box, 0, Qt.AlignmentFlag.AlignHCenter)
         col.addSpacing(8)
         self.play_button = button("", "menuPrimary", gw.play_clicked)
@@ -136,7 +134,6 @@ class MenuPage(QWidget):
         self.level_buttons[s["level"]].setChecked(True)
         self.mode_buttons[s["mode"]].setChecked(True)
         self.touch_buttons[s["corners"]].setChecked(True)
-        self.shots_buttons[s["salvo"]].setChecked(True)
 
     def retranslate(self):
         t = self.gw.t
@@ -150,8 +147,6 @@ class MenuPage(QWidget):
             b.setText(t("mode_" + k))
         self.touch_buttons[False].setText(t("touch_strict"))
         self.touch_buttons[True].setText(t("touch_corners"))
-        self.shots_buttons[False].setText(t("shots_single"))
-        self.shots_buttons[True].setText(t("shots_salvo"))
         self.play_button.setText(t("play"))
         self.stats_button.setText(t("stats"))
         self.settings_button.setText(t("settings"))
@@ -466,6 +461,9 @@ class SettingsPage(QWidget):
         self.delay.setRange(0, 3000)
         self.delay.valueChanged.connect(lambda v: gw.change("delay_ms", int(v)))
         self._row("delay", self.delay)
+        self.salvo_box = QCheckBox("")
+        self.salvo_box.toggled.connect(lambda on: gw.change("salvo", on))
+        self._row("salvo_rule", self.salvo_box)
         self.habits_button = button("", None, gw.forget_habits)
         self._row("habits", self.habits_button)
         col.addWidget(box)
@@ -509,6 +507,9 @@ class SettingsPage(QWidget):
             w.blockSignals(True)
             w.setValue(value)
             w.blockSignals(False)
+        self.salvo_box.blockSignals(True)
+        self.salvo_box.setChecked(g.settings["salvo"])
+        self.salvo_box.blockSignals(False)
         self.rows["habits"][1].setText(g.t("habits_hint", n=g.habits.games))
         self.habits_button.setEnabled(g.habits.games > 0 or g.habits.shot_games > 0)
 

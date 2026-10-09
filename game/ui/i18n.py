@@ -7,7 +7,7 @@ RU = {
     "level": "Уровень", "novice": "Новичок", "medium": "Средний", "strong": "Сильный",
     "mode": "Режим", "mode_play": "Против ИИ", "mode_demo": "ИИ против ИИ",
     "touch": "Касание", "touch_strict": "Нельзя", "touch_corners": "Углами можно",
-    "shots_rule": "Выстрелы", "shots_single": "По одному", "shots_salvo": "Залп",
+    "shots_single": "По одному", "shots_salvo": "Залп",
     "play": "Играть", "stats": "Статистика", "settings": "Настройки",
     "menu": "В меню", "again": "Новая партия",
     "setup_title": "Расставьте флот",
@@ -53,6 +53,8 @@ RU = {
     "volume": "Громкость", "volume_hint": "Всплеск, взрыв, победа и поражение.",
     "anim": "Анимации", "anim_hint": "Длительность всплеска и взрыва; 0 - без анимаций.",
     "delay": "Пауза ИИ", "delay_hint": "Сколько ИИ ждёт перед выстрелом, чтобы было видно, что происходит.",
+    "salvo_rule": "Залп", "salvo_rule_hint": "Не по классическим правилам: за ход столько выстрелов, сколько "
+                                             "у вас кораблей на плаву, за попадание добавки нет. По умолчанию выключен.",
     "habits": "Привычки", "habits_hint": "ИИ запоминает, где вы ставите корабли и куда стреляете первым "
                                          "(партий в памяти: {n}). Сильный уровень этим пользуется.",
     "habits_reset": "Забыть", "saved_note": "Настройки сохраняются сразу.",
@@ -66,7 +68,7 @@ EN = {
     "level": "Level", "novice": "Novice", "medium": "Medium", "strong": "Strong",
     "mode": "Mode", "mode_play": "Against AI", "mode_demo": "AI vs AI",
     "touch": "Touching", "touch_strict": "Not allowed", "touch_corners": "Corners allowed",
-    "shots_rule": "Shots", "shots_single": "One by one", "shots_salvo": "Salvo",
+    "shots_single": "One by one", "shots_salvo": "Salvo",
     "play": "Play", "stats": "Statistics", "settings": "Settings",
     "menu": "Menu", "again": "New game",
     "setup_title": "Place your fleet",
@@ -112,6 +114,8 @@ EN = {
     "volume": "Volume", "volume_hint": "Splash, blast, victory and defeat.",
     "anim": "Animations", "anim_hint": "Length of the splash and the blast; 0 turns them off.",
     "delay": "AI pause", "delay_hint": "How long the AI waits before a shot, so you can follow the game.",
+    "salvo_rule": "Salvo", "salvo_rule_hint": "Not the classic rules: as many shots per turn as you have ships "
+                                              "afloat, no extra shot for a hit. Off by default.",
     "habits": "Habits", "habits_hint": "The AI remembers where you place ships and where you shoot first "
                                        "(games remembered: {n}). The strong level uses this.",
     "habits_reset": "Forget", "saved_note": "Settings are saved at once.",
