@@ -13,11 +13,32 @@ from PySide6.QtCore import QObject, QThread, Signal
 from game.ai.agents import make_agent
 
 
+_ORPHANS = []
+_UNDERTAKER = None
+
+
+class _Undertaker(QObject):
+    """Живёт в потоке окна: сигнал finished сироты приходит сюда очередью, а не в сам поток."""
+
+    def bury(self):
+        for j in list(_ORPHANS):
+            if j.isFinished():
+                j.wait()
+                _ORPHANS.remove(j)
+
+
+def _undertaker():
+    global _UNDERTAKER
+    if _UNDERTAKER is None:
+        _UNDERTAKER = _Undertaker()
+    return _UNDERTAKER
+
+
 class _Job(QThread):
     done = Signal(int, str, object)
 
-    def __init__(self, token, kind, fn, parent=None):
-        super().__init__(parent)
+    def __init__(self, token, kind, fn):
+        super().__init__()
         self.token = token
         self.kind = kind
         self.fn = fn
@@ -44,14 +65,26 @@ class AiController(QObject):
 
     def _start(self, token, kind, fn):
         self._reap()
-        job = _Job(token, kind, fn, self)
+        # Без родителя: поток живёт, пока на него есть ссылка в self.jobs (или в _ORPHANS).
+        # Дочерний QThread разрушался вместе со старым окном, когда до окна добирался сборщик
+        # мусора, - а разрушение ещё работающего QThread это qFatal «Destroyed while thread is
+        # still running» и падение всей программы (CI на Gitea, c93c07f; тот же урок у DurakAi).
+        job = _Job(token, kind, fn)
         job.done.connect(self.ready)
+        job.finished.connect(self._reap)        # слот контроллера: выполняется в потоке окна
         self.jobs.append(job)
         job.start()
         return job
 
     def _reap(self):
-        self.jobs = [j for j in self.jobs if j.isRunning()]
+        """Кончившиеся потоки - из списка; последняя ссылка уходит, объект удаляется."""
+        alive = []
+        for j in self.jobs:
+            if j.isFinished():
+                j.wait()                        # поток вышел целиком, удалять безопасно
+            elif j.isRunning():
+                alive.append(j)
+        self.jobs = alive
 
     def request_move(self, token, obs, level, seed, habits=None, parity=0):
         agent = make_agent(level, habits=habits, parity=parity)
@@ -79,9 +112,18 @@ class AiController(QObject):
         return bool(self.jobs)
 
     def shutdown(self, timeout_ms=2000):
+        """Остановить расчёты и дождаться потоков (не дольше timeout_ms на всё). Не успевшие
+        (машина перегружена) уходят в _ORPHANS: окно можно разрушать, поток доработает сам и
+        только потом удалится. False - кто-то не успел."""
         self.cancel()
         deadline = time.monotonic() + timeout_ms / 1000
         for j in self.jobs:
             j.wait(max(0, int((deadline - time.monotonic()) * 1000)))
         self._reap()
-        return not self.jobs
+        for j in self.jobs:
+            j.done.disconnect(self.ready)
+            _ORPHANS.append(j)
+            j.finished.connect(_undertaker().bury)
+        self.jobs = []
+        _undertaker().bury()
+        return not _ORPHANS

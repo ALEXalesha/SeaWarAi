@@ -77,3 +77,11 @@ MUTANTS += [
     ("placement: стрельбу игрока не видит", "game/ai/placement.py", "    if habits is not None:\n        shots",
      "    if False:\n        shots", TB2),
 ]
+T = "game/ui/ai_thread.py"
+TU = "tests/test_ui.py"
+MUTANTS += [
+    ("thread: не успевший поток не в сиротах", T, "            _ORPHANS.append(j)\n", "", TU),
+    # «j.wait() у кончившегося» не мутируется: isFinished уже значит, что run() вышел, разница
+    # не наблюдаема - мутант был бы равносильным.
+    ("thread: список не чистится сам", T, "        job.finished.connect(self._reap)", "        pass", TU),
+]

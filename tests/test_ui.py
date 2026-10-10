@@ -36,6 +36,10 @@ def win(app, tmp_path):
     yield w
     g.shutdown()
     w.close()
+    # окно разрушается сразу и в потоке окна, а не когда-нибудь сборщиком мусора
+    w.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def wait(app, cond, limit=30.0):
@@ -349,3 +353,42 @@ def test_pause_on_human_turn_ignores_clicks(app, win):
     g.resume()
     g.on_cell(55)
     assert s.match.shots[0] == 1
+
+
+def test_thread_that_ignores_stop_survives_widget_destruction(app):
+    """Поток, не успевший остановиться за shutdown(), уходит в сироты: окно разрушается,
+    а поток дорабатывает сам. Разрушение работающего QThread - qFatal и падение программы
+    (так упал CI на Gitea, когда в окне перестал быть gc.freeze)."""
+    import threading as th
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from game.ui import ai_thread
+    ctl = ai_thread.AiController()
+    release = th.Event()
+    ctl._start(1, "move", lambda: release.wait(5) and None)
+    assert ctl.busy()
+    assert ctl.shutdown(100) is False                 # не успел - и честно сказал
+    assert not ctl.jobs and len(ai_thread._ORPHANS) == 1
+    ctl.deleteLater()
+    del ctl
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
+    release.set()
+    assert wait(app, lambda: not ai_thread._ORPHANS, 5)
+
+
+def test_finished_ai_threads_are_deleted(app, win):
+    from PySide6.QtCore import QCoreApplication, QEvent, QThread
+    from game.ui.ai_thread import _Job
+    g = win.game
+    g.change("mode", "demo")
+    g.change("level", "novice")
+    g.play_clicked()
+    assert wait(app, lambda: g.session.over, 60)
+    assert wait(app, lambda: not g.ai.jobs, 5)        # список чистит сам сигнал finished
+    for _ in range(5):
+        app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
+    assert not g.ai.findChildren(QThread)
+    assert sum(isinstance(o, _Job) for o in gc.get_objects()) <= 1
+    g.change("mode", "play")
