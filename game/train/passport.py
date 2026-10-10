@@ -3,13 +3,16 @@
     python -m game.train.passport                  # полный: 10 000 партий на уровень
     python -m game.train.passport --games 200      # быстрый пробный
     python -m game.train.passport --processes 2
+    python -m game.train.passport --only placement # пересчитать одну проверку в готовом паспорте
 
 Проверки (spec §3):
 - shots: сколько выстрелов нужно каждому уровню, чтобы потопить случайный флот (все
   расстановки равновероятны); среднее, медиана, разброс. Партия i - bench.shots_to_sink;
 - duel: сильный против среднего, партия целиком, по очереди первым; доля побед сильного;
 - placement: сильный и средний стреляют по расстановке ИИ - живёт ли она дольше случайной;
-- habits: игрок, который любит края; сильный с привычками (выучены по 30 его партиям) и без.
+- habits: игрок, который любит середину поля; сильный с привычками (выучены по 30 его партиям)
+  и без. Игрок, любящий края, почти не отличается от равновероятной расстановки (она и так
+  тяготеет к краям): на нём разница 0.5 выстрела была в пределах шума.
 
 Каждый исход записан партия за партией: тест пересчитывает первые партии с теми же зёрнами.
 Обучения нет - паспорт только меряет. Потоки BLAS - по одному на процесс.
@@ -47,8 +50,8 @@ def job(task):
     if kind == "placement":
         return bench.shots_to_sink(arg, SEED + 2, i, placer="ai")
     if kind == "habits":
-        h = bench.learned_habits(SEED + 3, HABIT_GAMES) if arg == "with" else None
-        return bench.shots_to_sink("strong", SEED + 4, i, placer="edge", habits=h)
+        h = bench.learned_habits(SEED + 3, HABIT_GAMES, player="centre") if arg == "with" else None
+        return bench.shots_to_sink("strong", SEED + 4, i, placer="centre", habits=h)
     raise ValueError(kind)
 
 
@@ -88,6 +91,8 @@ def main(argv=None):
     ap.add_argument("--habits", type=int, default=300)
     ap.add_argument("--processes", type=int, default=2)
     ap.add_argument("--out", default=OUT)
+    ap.add_argument("--only", choices=("shots", "duel", "placement", "habits"),
+                    help="пересчитать только эту проверку, остальное взять из готового паспорта")
     a = ap.parse_args(argv)
     pool = None
     if a.processes > 1:
@@ -98,29 +103,41 @@ def main(argv=None):
             "seed": SEED, "samples": DEFAULT_SAMPLES, "rules": "строгие (углами не касаться), без залпа",
             "random_fleet": "все расстановки по правилам почти равновероятны (prob.uniform_fleet)",
             "processes": a.processes, "machine": platform.processor() or platform.machine(), "checks": {}}
+    want = (lambda name: True) if a.only is None else (lambda name: name == a.only)
+    if a.only is not None:
+        with open(a.out, encoding="utf-8") as f:
+            old = json.load(f)
+        data["checks"] = old["checks"]
+        data["seconds_total_before"] = old.get("seconds_total")
     try:
-        shots = {}
-        for level in LEVELS:
+        shots = data["checks"].get("shots", {})
+        for level in (LEVELS if want("shots") else ()):
             res, sec = run([("shots", level, i) for i in range(a.games)], pool, f"выстрелы {level}")
             shots[level] = {**stats(res), "seconds": round(sec, 1), "results": res}
         data["checks"]["shots"] = shots
-        res, sec = run([("duel", None, i) for i in range(a.duel)], pool, "сильный против среднего")
-        res = "".join(res)
-        data["checks"]["duel"] = {"games": len(res), "wins": res.count("W"),
-                                  "score": round(res.count("W") / max(len(res), 1), 4),
-                                  "seconds": round(sec, 1), "results": res}
-        place = {}
-        for level in ("strong", "medium"):
+        if want("duel"):
+            res, sec = run([("duel", None, i) for i in range(a.duel)], pool, "сильный против среднего")
+            res = "".join(res)
+            data["checks"]["duel"] = {"games": len(res), "wins": res.count("W"),
+                                      "score": round(res.count("W") / max(len(res), 1), 4),
+                                      "seconds": round(sec, 1), "results": res}
+        place = data["checks"].get("placement", {})
+        for level in (("strong", "medium") if want("placement") else ()):
             r, sec = run([("placement", level, i) for i in range(a.placement)], pool, f"расстановка ИИ, стреляет {level}")
             place[level] = {**stats(r), "random_mean": shots[level]["mean"],
                             "random_mean_same_games": round(float(np.mean(shots[level]["results"][:len(r)])), 2),
                             "seconds": round(sec, 1), "results": r}
         data["checks"]["placement"] = place
-        hab = {}
-        for arg in ("without", "with"):
+        hab = data["checks"].get("habits", {})
+        for arg in (("without", "with") if want("habits") else ()):
             r, sec = run([("habits", arg, i) for i in range(a.habits)], pool, f"привычки {arg}")
             hab[arg] = {**stats(r), "seconds": round(sec, 1), "results": r}
         hab["learned_games"] = HABIT_GAMES
+        hab["player"] = "centre"
+        if "with" in hab and "without" in hab:
+            d = np.array(hab["without"]["results"]) - np.array(hab["with"]["results"])
+            hab["paired_gain"] = round(float(d.mean()), 3)
+            hab["paired_stderr"] = round(float(d.std() / np.sqrt(len(d))), 3)
         data["checks"]["habits"] = hab
     finally:
         if pool is not None:

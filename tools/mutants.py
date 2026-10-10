@@ -72,8 +72,8 @@ MUTANTS += [
     ("habits: флот не пишется", H, "            self.cells[len(s)][list(s)] += 1", "            pass", TB2),
     ("habits: без сглаживания", H, "f = (_blur(self.cells[L]) + SMOOTH * b) / (self.games + SMOOTH)",
      "f = (self.cells[L] + 0.01 * b) / (self.games + 0.01)", TB2),
-    ("placement: самый рискованный", "game/ai/placement.py", 'order = np.argsort([fleet_risk(f, risk) for f in fleets], kind="stable")',
-     'order = np.argsort([-fleet_risk(f, risk) for f in fleets], kind="stable")', TB2),
-    ("placement: стрельбу игрока не видит", "game/ai/placement.py", "risk = risk + SHOT_WEIGHT * habits.shot_map() * 4",
-     "risk = risk", TB2),
+    ("placement: самый большой ореол", "game/ai/placement.py", 'order = np.argsort([fleet_score(f, rules, habits) for f in fleets], kind="stable")',
+     'order = np.argsort([-fleet_score(f, rules, habits) for f in fleets], kind="stable")', TB2),
+    ("placement: стрельбу игрока не видит", "game/ai/placement.py", "    if habits is not None:\n        shots",
+     "    if False:\n        shots", TB2),
 ]

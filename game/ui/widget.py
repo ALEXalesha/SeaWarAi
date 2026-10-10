@@ -4,7 +4,6 @@
 ctx и меняются на лету по ctx.changed. Файлы - только в ctx.data_dir: settings.json,
 habits.json (привычки игрока), records.json (меньше всего выстрелов до победы).
 """
-import gc
 import json
 import os
 import random
@@ -119,7 +118,7 @@ class MenuPage(QWidget):
         row(2, "touch", w)
         col.addWidget(box, 0, Qt.AlignmentFlag.AlignHCenter)
         col.addSpacing(8)
-        self.play_button = button("", "menuPrimary", gw.play_clicked)
+        self.play_button = button("", "menuPrimary", lambda: gw.play_clicked())
         self.stats_button = button("", "menu", lambda: gw.show_page("stats"))
         self.settings_button = button("", "menu", lambda: gw.show_page("settings"))
         for b in (self.play_button, self.stats_button, self.settings_button):
@@ -177,10 +176,12 @@ class SetupPage(QWidget):
         self.status = label("", "section")
         bottom.addWidget(self.status)
         bottom.addStretch(1)
-        self.random_button = button("", None, gw.random_setup)
+        # слоты - только через lambda: clicked(False) иначе уходит в первый аргумент (урок DurakAi:
+        # start_game(seed=False) - одна и та же раздача)
+        self.random_button = button("", None, lambda: gw.random_setup())
         self.clear_button = button("", None, self.board.clear)
         self.menu_button = button("", None, lambda: gw.show_page("menu"))
-        self.battle_button = button("", "primary", gw.start_battle)
+        self.battle_button = button("", "primary", lambda: gw.start_battle())
         for b in (self.random_button, self.clear_button, self.menu_button, self.battle_button):
             bottom.addWidget(b)
         col.addLayout(bottom)
@@ -266,10 +267,10 @@ class PlayPage(QWidget):
         self.log.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.log.setMinimumHeight(120)
         col.addWidget(self.log, 1)
-        self.pause_button = button("", None, gw.toggle_pause)
+        self.pause_button = button("", None, lambda: gw.toggle_pause())
         col.addWidget(self.pause_button)
         last = QHBoxLayout()
-        self.again_button = button("", "primary", gw.play_clicked)
+        self.again_button = button("", "primary", lambda: gw.play_clicked())
         self.menu_button = button("", None, lambda: gw.show_page("menu"))
         last.addWidget(self.again_button, 1)
         last.addWidget(self.menu_button, 1)
@@ -464,7 +465,7 @@ class SettingsPage(QWidget):
         self.salvo_box = QCheckBox("")
         self.salvo_box.toggled.connect(lambda on: gw.change("salvo", on))
         self._row("salvo_rule", self.salvo_box)
-        self.habits_button = button("", None, gw.forget_habits)
+        self.habits_button = button("", None, lambda: gw.forget_habits())
         self._row("habits", self.habits_button)
         col.addWidget(box)
         self.note = label("", "hint")
@@ -520,14 +521,14 @@ class SettingsPage(QWidget):
 class GameWidget(QWidget):
     def __init__(self, ctx):
         super().__init__()
-        gc.freeze()        # полный проход сборщика посреди расчёта ИИ держит GIL (урок ChessCheckersAi)
         self.ctx = ctx
         self.t = translator(ctx.lang)
         self.settings = st.Settings(SCHEMA, ctx.file("settings.json"))
         self.habits = Habits(ctx.file("habits.json"))
         self.session = None
         self.token = 0
-        self.paused = False
+        self.paused = False            # пауза показа «ИИ против ИИ» (кнопка)
+        self.hidden = False            # оболочка спрятала вкладку: pause() / resume()
         self.thoughts = None           # {'map', 'method', 'board'} - на каком поле
         self.last = {0: -1, 1: -1}     # последний выстрел по полю игрока
         self.rng = random.Random()
@@ -634,6 +635,24 @@ class GameWidget(QWidget):
         if self.session is not None:
             self.refresh()
 
+    def pause(self):
+        """Оболочка спрятала вкладку (переключились на другую игру, свернули окно): ИИ не
+        думает и не стреляет, таймеры и анимации стоят. Партия ждёт."""
+        if self.hidden:
+            return
+        self.hidden = True
+        self._invalidate()
+        for b in (self.play.own, self.play.enemy):
+            b.stop()
+
+    def resume(self):
+        """Вкладку показали снова: партия идёт дальше с того же места."""
+        if not self.hidden:
+            return
+        self.hidden = False
+        if self.session is not None and self.current_page() == "play":
+            self.after_change()
+
     def shutdown(self):
         """Окно закрывается: таймеры стоп, расчёты ИИ остановить и дождаться (не дольше 2 с)."""
         self._invalidate()
@@ -695,7 +714,7 @@ class GameWidget(QWidget):
 
     def on_cell(self, cell):
         s = self.session
-        if s is None or not s.human_turn() or cell not in s.match.legal():
+        if s is None or self.hidden or not s.human_turn() or cell not in s.match.legal():
             return
         self._fire(cell)
 
@@ -728,6 +747,8 @@ class GameWidget(QWidget):
         self.refresh()
         if s.over:
             self._finish()
+            return
+        if self.hidden:                    # resume() запустит ИИ заново
             return
         show = self.settings["show_thoughts"]
         if s.human_turn():

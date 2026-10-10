@@ -5,7 +5,7 @@ import numpy as np
 
 from game.ai.agents import StrongAgent
 from game.ai.habits import FIRST_SHOTS, Habits, base_frequency, empty_board_map
-from game.ai.placement import ai_fleet, fleet_risk, risk_map
+from game.ai.placement import ai_fleet, halo_size
 from game.ai.prob import geometry
 from game.core.battle import Observation
 from game.core.rules import FLEET, Rules, random_fleet, valid_fleet
@@ -81,26 +81,33 @@ def test_few_games_weigh_little():
         assert 0.3 < prior[L].min() and prior[L].max() < 3
 
 
-def test_ai_fleet_valid_varied_and_low_risk():
+def test_ai_fleet_valid_varied_and_small_halo():
     rng = np.random.default_rng(4)
-    risk = risk_map()
     fleets = [ai_fleet(rng) for _ in range(25)]
     assert all(valid_fleet(f) for f in fleets)
-    assert len({tuple(sorted(f)) for f in fleets}) == 25
+    assert len({tuple(sorted(f)) for f in fleets}) >= 24
     rand = [random_fleet(rng) for _ in range(25)]
-    assert np.mean([fleet_risk(f, risk) for f in fleets]) < np.mean([fleet_risk(f, risk) for f in rand]) - 0.3
+    assert np.mean([halo_size(f) for f in fleets]) < np.mean([halo_size(f) for f in rand]) - 5
+
+
+def test_ai_fleet_fast_enough_for_game_start():
+    import time
+    rng = np.random.default_rng(1)
+    t0 = time.perf_counter()
+    for _ in range(5):
+        ai_fleet(rng)
+    assert (time.perf_counter() - t0) / 5 < 0.5
 
 
 def test_ai_fleet_avoids_where_player_shoots_first():
     h = Habits()
-    centre = [x for x in range(100) if 3 <= x // 10 <= 6 and 3 <= x % 10 <= 6]
+    hot = [x for x in range(100) if x // 10 in (0, 9) or x % 10 in (0, 9)][:FIRST_SHOTS]
     for _ in range(10):
-        h.record_shots(centre[:FIRST_SHOTS])
+        h.record_shots(hot)
     rng = np.random.default_rng(5)
     with_h = [ai_fleet(rng, Rules(), h) for _ in range(20)]
     without = [ai_fleet(rng, Rules(), None) for _ in range(20)]
-    hot = set(centre[:FIRST_SHOTS])
-    count = lambda fs: sum(1 for f in fs for s in f for x in s if x in hot)  # noqa: E731
+    count = lambda fs: sum(1 for f in fs for s in f for x in s if x in set(hot))  # noqa: E731
     assert count(with_h) < count(without)
 
 

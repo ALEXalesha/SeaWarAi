@@ -1,6 +1,8 @@
 """Окно без экрана (Qt offscreen): расстановка мышью, бой, ИИ в потоке, залп, «Мысли ИИ»,
 темы, языки, статистика, привычки, остановка за 2 секунды. Ожидания - с тайм-аутом; мышь -
 собранными событиями, настоящий курсор не трогается."""
+import gc
+import os
 import time
 
 import numpy as np
@@ -259,3 +261,91 @@ def test_window_min_size(app, win):
     app.processEvents()
     _, _, cell = g.play.own.geometry_()
     assert cell >= 20
+
+
+def gc_state():
+    return gc.get_freeze_count(), gc.isenabled(), gc.get_threshold()
+
+
+def test_widget_leaves_garbage_collector_alone(app, tmp_path):
+    """Игра в оболочке не трогает сборщик мусора: gc.freeze навсегда оставил бы в памяти и
+    объекты оболочки (урок DurakAi 0.9.0)."""
+    from aikit.host import make_window
+    before = gc_state()
+    w, _ = make_window(GAME_INFO, create_widget, APP_NAME, root=str(tmp_path / "gc"))
+    w.game.start_battle(seed=1, fleet=HAND)
+    assert gc_state() == before
+    w.game.shutdown()
+    w.close()
+
+
+def test_game_code_never_touches_gc():
+    import ast
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bad = []
+    for top in ("game", "aikit"):
+        for folder, _, files in os.walk(os.path.join(root, top)):
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(folder, name)
+                for node in ast.walk(ast.parse(open(path, encoding="utf-8").read())):
+                    if (isinstance(node, ast.Attribute) and node.attr in ("freeze", "unfreeze", "disable", "set_threshold")
+                            and isinstance(node.value, ast.Name) and node.value.id == "gc"):
+                        bad.append(f"{os.path.relpath(path, root)}:{node.lineno} gc.{node.attr}")
+    assert not bad, bad
+
+
+def test_buttons_start_new_random_games(app, win):
+    """Кнопка «В бой» и «Новая партия» - каждый раз новая партия, а не зерно False = 0."""
+    g = win.game
+    g.show_page("setup")
+    g.random_setup()
+    seeds = set()
+    for _ in range(4):
+        g.setup.battle_button.click()
+        seeds.add(g.session.seed)
+        g.show_page("setup")
+    assert len(seeds) == 4 and False not in seeds
+
+
+def test_pause_stops_everything_and_resume_continues(app, win):
+    g = win.game
+    g.change("anim_ms", 200)
+    g.change("mode", "demo")
+    g.change("level", "medium")
+    g.play_clicked()
+    shots = lambda: sum(g.session.match.shots)  # noqa: E731
+    assert wait(app, lambda: shots() >= 4, 30)
+    g.pause()
+    g.pause()                                    # второй раз - ничего не ломает
+    n = shots()
+    assert not g.timer.isActive() and not g.play.own.timer.isActive() and not g.play.enemy.timer.isActive()
+    g.change("show_thoughts", True)              # перерисовка скрытой вкладки не будит ИИ
+    g.ctx.set_lang("en")
+    end = time.time() + 0.8
+    while time.time() < end:
+        app.processEvents()
+        time.sleep(0.005)
+    assert shots() == n and not g.timer.isActive()
+    g.ctx.set_lang("ru")
+    g.change("show_thoughts", False)
+    g.resume()
+    g.resume()
+    g.change("anim_ms", 0)
+    assert wait(app, lambda: shots() >= n + 4, 30)
+    g.change("mode", "play")
+
+
+def test_pause_on_human_turn_ignores_clicks(app, win):
+    g = win.game
+    g.change("level", "novice")
+    g.start_battle(seed=2, fleet=HAND)           # чётное зерно - первым ходит человек
+    s = g.session
+    assert s.human_turn()
+    g.pause()
+    g.on_cell(55)
+    assert s.match.shots[0] == 0
+    g.resume()
+    g.on_cell(55)
+    assert s.match.shots[0] == 1

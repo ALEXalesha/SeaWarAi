@@ -369,3 +369,19 @@ def uniform_fleet(rng, corners=False, fleet=None, samples=256):
         k = int(np.searchsorted(np.cumsum(wts), rng.random() * wts.sum(), side="right"))
         k = min(k, len(wts) - 1)
         return ships_from_cells(np.nonzero(occ[k])[0])
+
+
+def uniform_fleets(rng, k, corners=False, fleet=None, samples=512):
+    """k почти равновероятных расстановок из одной выборки с весами (быстрее, чем k раз
+    uniform_fleet). Повторы возможны, если выборка мала."""
+    from game.core.battle import Observation
+    from game.core.rules import FLEET
+    fleet = tuple(sorted(fleet or FLEET, reverse=True))
+    obs = Observation(tuple([0] * (SIZE * SIZE)), fleet, corners)
+    while True:
+        occ, wts = mc_map(obs, rng, samples, by_length="raw")
+        if occ is not None:
+            break
+    cum = np.cumsum(wts)
+    picks = np.minimum(np.searchsorted(cum, rng.random(k) * cum[-1], side="right"), len(wts) - 1)
+    return [ships_from_cells(np.nonzero(occ[int(j)])[0]) for j in picks]

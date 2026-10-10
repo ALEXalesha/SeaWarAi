@@ -30,6 +30,8 @@ def make_fleet(placer, rng, rules=Rules(), habits=None):
         return ai_fleet(rng, rules, habits)
     if placer == "edge":
         return edge_lover_fleet(rng, rules)
+    if placer == "centre":
+        return centre_lover_fleet(rng, rules)
     raise ValueError(placer)
 
 
@@ -45,14 +47,27 @@ def edge_lover_fleet(rng, rules=Rules(), tries=40):
     return best[1]
 
 
+def centre_lover_fleet(rng, rules=Rules(), tries=40):
+    """Игрок с привычкой ставить в середину: из tries случайных расстановок берёт ту, где
+    больше всего клеток во внутреннем квадрате 6 x 6."""
+    best = None
+    for _ in range(tries):
+        f = random_fleet(rng, rules)
+        score = sum(1 for s in f for x in s if 2 <= x // 10 <= 7 and 2 <= x % 10 <= 7)
+        if best is None or score > best[0]:
+            best = (score, f)
+    return best[1]
+
+
 @lru_cache(maxsize=4)
-def learned_habits(seed, games, rules=Rules()):
-    """Привычки, выученные по games расстановкам игрока, любящего края (одни на процесс)."""
+def learned_habits(seed, games, rules=Rules(), player="edge"):
+    """Привычки, выученные по games расстановкам игрока (одни на процесс)."""
     from game.ai.habits import Habits
     h = Habits()
     rng = np.random.default_rng([int(seed), 999])
+    make = edge_lover_fleet if player == "edge" else centre_lover_fleet
     for _ in range(games):
-        h.record_fleet(edge_lover_fleet(rng, rules), save=False)
+        h.record_fleet(make(rng, rules), save=False)
     return h
 
 
