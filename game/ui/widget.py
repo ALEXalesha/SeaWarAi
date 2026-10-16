@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from aikit import settings as st
-from aikit import theme
+from aikit import gamelog, theme
+from aikit.charts import GameCharts
 from aikit.storage import is_int, load_json, save_json
 from aikit.widgets import Combo, button, card, label, restyle, segmented
 from game.ai.agents import LEVELS
@@ -351,6 +352,19 @@ class StatsPage(QWidget):
         self.table = table_widget(6)
         mc.addWidget(self.table)
         col.addWidget(mine)
+        # графики (правило автора 10.10 - графики в статистике всех игр с ИИ): доля побед,
+        # итоги по уровням, выстрелов за партию, выстрелов до победы с рекордом, паспорт
+        cc = card()
+        cl = QVBoxLayout(cc)
+        cl.setContentsMargins(18, 14, 18, 14)
+        cl.setSpacing(10)
+        self.charts_title = label("", "section")
+        cl.addWidget(self.charts_title)
+        self.charts = GameCharts(LEVELS, length_key="shots", score_key="win_shots", score_better="min",
+                                 passport=True)
+        self.charts.passport.percent = False             # паспорт - среднее число выстрелов
+        cl.addWidget(self.charts)
+        col.addWidget(cc)
         pc = card()
         pl = QVBoxLayout(pc)
         pl.setContentsMargins(18, 14, 18, 14)
@@ -382,6 +396,7 @@ class StatsPage(QWidget):
                 self.table.setItem(r, c, item(str(e[f])))
             self.table.setItem(r, 5, item(str(records[key]) if key in records else "-"))
         fit_height(self.table)
+        self.refresh_charts()
         self.pass_title.setText(t("passport"))
         try:
             pp = load_passport()
@@ -411,6 +426,24 @@ class StatsPage(QWidget):
             foot.append(t("placement_text", a=f"{place['mean']:.1f}", b=f"{place['random_mean']:.1f}"))
         self.pass_foot.setText(" ".join(foot))
         self.pass_foot.setVisible(bool(foot))
+
+    def refresh_charts(self):
+        t = self.gw.t
+        self.charts_title.setText(t("charts"))
+        self.charts.set_theme(self.gw.ctx.theme)
+        try:
+            shots = load_passport()["checks"]["shots"]
+            levels = [lv for lv in LEVELS if lv in shots]
+            passport = ([t(lv) for lv in levels], [(t("ch_mean_shots"), "accent", [shots[lv]["mean"] for lv in levels])])
+        except (OSError, ValueError, KeyError, TypeError):
+            passport = None
+        self.charts.refresh(self.gw.history.games, self.gw.ctx.lang, {lv: t(lv) for lv in LEVELS},
+                            labels={"length": t("ch_shots"), "length_empty": t("ch_shots_empty"),
+                                    "length_y": t("ch_shots_y"), "score": t("ch_win_shots"),
+                                    "score_empty": t("ch_win_shots_empty"), "score_y": t("ch_shots_y"),
+                                    "points": t("ch_win"), "passport": t("ch_passport"),
+                                    "passport_empty": t("not_measured")},
+                            passport=passport)
 
 
 # --- настройки ---
@@ -544,6 +577,7 @@ class GameWidget(QWidget):
         self.menu = MenuPage(self)
         self.setup = SetupPage(self)
         self.play = PlayPage(self)
+        self.history = gamelog.GameLog(ctx.file("games.json"))
         self.stats = StatsPage(self)
         self.settings_page = SettingsPage(self)
         self.pages = {"menu": self.menu, "setup": self.setup, "play": self.play, "stats": self.stats,
@@ -619,6 +653,7 @@ class GameWidget(QWidget):
         c = theme.palette(self.ctx.theme)
         for b in (self.play.own, self.play.enemy, self.setup.board):
             b.set_theme(self.ctx.theme, self.ctx.lang)
+        self.stats.charts.set_theme(self.ctx.theme)
         for combo in self.findChildren(Combo):
             combo.set_arrow_color(c["text"])
         self.update()
@@ -798,6 +833,11 @@ class GameWidget(QWidget):
         outcome = s.outcome_for_human()
         if outcome and not s.recorded:
             self.ctx.stats.record(s.stats_key(), outcome)
+            level, variant = s.stats_key().split("/")[:2]
+            game = {"level": level, "variant": variant, "outcome": outcome, "shots": s.match.shots[s.human]}
+            if outcome == "win":
+                game["win_shots"] = game["shots"]
+            self.history.record(game)                    # журнал для графиков статистики
             if outcome == "win":
                 rec = self.records()
                 key = s.stats_key()

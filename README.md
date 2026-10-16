@@ -24,6 +24,10 @@
 
 <img src="docs/preview_setup_light.png" width="640" alt="Placing the fleet: ships on the board, three single-deck ships still in the dock">
 
+- **Statistics with charts** (the shared `aikit.charts`): your share of wins (last 20 and all games), wins and losses against each AI level, your shots per game, shots to win with your record, and the AI strength from the passport as bars. With no games yet a chart says in words what will appear.
+
+<img src="docs/preview_charts.png" width="880" alt="Statistics charts: share of wins, results by AI level, shots per game, shots to win and record, AI strength from the passport">
+
 ## How the AI plays
 
 - **Novice**: a random unknown cell; after a hit it finishes the ship along the line.

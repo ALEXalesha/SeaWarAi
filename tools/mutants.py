@@ -85,3 +85,12 @@ MUTANTS += [
     # не наблюдаема - мутант был бы равносильным.
     ("thread: список не чистится сам", T, "        job.finished.connect(self._reap)", "        pass", TU),
 ]
+
+# графики статистики (aikit.charts)
+TSC = "tests/test_stats_charts.py"
+W = "game/ui/widget.py"
+MUTANTS += [
+    ("charts: партия не в журнале", W, "            self.history.record(game)", "            pass", TSC),
+    ("charts: выстрелы до победы и у поражения", W, '            if outcome == "win":\n                game["win_shots"]', '            if True:\n                game["win_shots"]', TSC),
+    ("charts: рекорд - больше выстрелов", W, 'score_key="win_shots", score_better="min"', 'score_key="win_shots", score_better="max"', TSC),
+]
