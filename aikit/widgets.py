@@ -112,7 +112,20 @@ def fit_segments(*groups):
             f = QFont(b.font())
             f.setPixelSize(max(14, f.pixelSize()))
             f.setWeight(QFont.Weight.Bold)
-            b.setMinimumWidth(QFontMetrics(f).horizontalAdvance(b.text()) + 30)
+            b.setMinimumWidth(bold_width(b, f))
+
+
+def bold_width(b, bold=None):
+    """Ширина кнопки под жирную надпись: жирный текст + поля и рамка самой кнопки (из её
+    sizeHint по обычному шрифту). Поля берутся у кнопки, а не числом: в меню игр кнопки
+    крупнее темы (на 4K поля 29 px, а не 10) - «+30» обрезал выбранную «Medium» (Дурак, 17.10).
+    Qt не знает, что :checked в таблице стилей жирный: font() и sizeHint - по обычному."""
+    if bold is None:
+        bold = QFont(b.font())
+        bold.setWeight(QFont.Weight.Bold)
+    text = b.text()
+    frame = b.sizeHint().width() - QFontMetrics(b.font()).horizontalAdvance(text)
+    return QFontMetrics(bold).horizontalAdvance(text) + max(30, frame)
 
 
 fit_bold = fit_segments          # имя из BlockDropAi

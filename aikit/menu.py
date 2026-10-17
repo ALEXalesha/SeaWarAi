@@ -224,6 +224,11 @@ def text_clipped(w):
     if isinstance(w, QAbstractButton):
         if not w.text():
             return False
+        if w.isCheckable():
+            # выбранная пишется жирным (:checked в таблице стилей), а sizeHint - по обычному
+            from aikit.widgets import bold_width
+            if bold_width(w) > w.width() + 1:
+                return True
         return w.sizeHint().width() > w.width() or w.sizeHint().height() > w.height() + 1
     return False
 

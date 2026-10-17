@@ -143,3 +143,35 @@ def test_fill_share_and_sizes(qapp):
     child = QWidget(root)
     child.resize(950, 10)
     assert abs(fill_share(child, root) - 0.95) < 1e-9
+
+
+def test_checked_bold_button_needs_room_for_bold_text(qapp):
+    """Выбранная кнопка жирная (таблица стилей), Qt считает ширину по обычному - закон видит
+    обрезку жирной надписи, а fit_segments даёт ей место при любом кегле (Дурак 4K, 17.10)."""
+    from aikit.widgets import fit_segments, segmented
+    page = QWidget()
+    page.resize(900, 200)
+    box, buttons = segmented({"a": "Medium", "b": "Strong"}, lambda v: None)
+    box.setParent(page)
+    page.setStyleSheet("QPushButton#seg { font-family: Georgia; font-size: 34px; padding: 6px 29px; }"
+                       "QPushButton#seg:checked { font-weight: 700; }")
+    buttons["a"].setChecked(True)
+    for b in buttons.values():
+        b.setMinimumWidth(0)
+        b.ensurePolished()
+    lay = box.layout()
+    page.show()
+    qapp.processEvents()
+    for b in buttons.values():
+        b.setFixedWidth(b.sizeHint().width())       # ровно по обычному шрифту - жирный не влезет
+    qapp.processEvents()
+    assert any("Medium" in s for s in layout_problems(page))
+    for b in buttons.values():
+        b.setMinimumWidth(0)
+        b.setMaximumWidth(16777215)
+    fit_segments(buttons)
+    lay.activate()
+    box.adjustSize()
+    qapp.processEvents()
+    assert layout_problems(page) == []
+    page.close()
