@@ -6,12 +6,18 @@
 Каждый мутант - замена строки в файле. Файл правится на месте, гоняются указанные
 проверки, затем файл восстанавливается (в finally - и при Ctrl+C). Мутант «выжил», если
 проверки остались зелёными: значит, этот кусок продукта не проверен.
+
+Прогон - общий aikit.mutate: сначала те же проверки БЕЗ мутанта (красные - прогон
+останавливается, код 2: «пойман» на уже красных проверках ничего не значит; так закон с
+неверными данными «ловил» мутантов графиков 17.10), зависание дольше 900 с - пойман.
 """
 import os
-import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from aikit.mutate import main as run_all  # noqa: E402
 
 # (имя, файл, было, стало, проверки)
 MUTANTS = []
@@ -28,35 +34,8 @@ def load_more():
     return []
 
 
-def run(mutant, python):
-    name, rel, old, new, tests = mutant
-    path = os.path.join(ROOT, rel)
-    with open(path, encoding="utf-8", newline="") as f:
-        src = f.read()
-    if src.count(old) != 1:
-        return name, f"строка найдена {src.count(old)} раз"
-    try:
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            f.write(src.replace(old, new))
-        r = subprocess.run([python, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider",
-                            *tests.split()], cwd=ROOT, capture_output=True, text=True,
-                           timeout=900)
-        return name, "пойман" if r.returncode != 0 else "ВЫЖИЛ"
-    finally:
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            f.write(src)
-
-
 def main(argv):
-    flt = argv[1] if len(argv) > 1 else ""
-    mutants = [m for m in MUTANTS + load_more() if flt in m[0]]
-    alive = 0
-    for m in mutants:
-        name, verdict = run(m, sys.executable)
-        print(f"{verdict:8} {name}", flush=True)
-        alive += verdict != "пойман"
-    print(f"итого {len(mutants)}, не пойманы {alive}")
-    return 1 if alive else 0
+    return run_all(ROOT, MUTANTS + load_more(), argv[1:], python=sys.executable)
 
 
 if __name__ == "__main__":

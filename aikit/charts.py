@@ -15,6 +15,14 @@
 попадает в chart.clipped после отрисовки - законы-тесты игр проверяют, что там пусто.
 Ширина текста считается с запасом SLACK: на настоящем экране буквы шире, чем в offscreen.
 Не влезают заголовок и легенда в одну строку - легенда уходит на вторую строку.
+Надписи не налезают друг на друга: всё, что карточка написала, с прямоугольником попадает
+в chart.labels, а chart.overlaps() - пары налезающих (законы игр проверяют, что пусто).
+Числа над столбиками стоят в своём запасе высоты, а не на легенде (0.2.2).
+
+Длинный журнал не тормозит: линия, у которой точек больше, чем столбцов экрана, рисуется
+полосой между наименьшим и наибольшим значением каждого столбца (envelope) - пики и провалы
+на месте, а вершин не больше двух на столбец в 3 пикселя (0.2.2: 5000 партий рисовались больше секунды
+на карточку, страница статистики - секунды на каждую перерисовку).
 
 ChartGrid - карточки в две колонки (в одну на узкой странице), широкие - на всю строку.
 Высоту под ширину сообщает heightForWidth, поэтому сетка правильно живёт в QScrollArea.
@@ -35,6 +43,8 @@ PAD = 14
 BOTTOM = 46          # подписи делений и название оси под графиком
 GAP = 12             # между карточками в ChartGrid
 LEGEND_GAP = 14      # между сериями в легенде
+VALUE_ROOM = 16      # запас высоты над столбиками для чисел
+MAX_COLUMNS = 250    # густая линия - полосой не больше чем из стольких столбцов (и в 4K)
 
 TEXTS = {
     "ru": {
@@ -161,6 +171,27 @@ def x_ticks(x0, x1, most=6):
     return out or [x0]
 
 
+def envelope(points, x0, x1, columns):
+    """Густая линия (точек больше, чем столбцов экрана) - полоса: на каждый столбец
+    (x, наименьшее, наибольшее). Зигзаг из тысяч вершин сглаженное перо рисует секундами,
+    а полоса из двух огибающих - миллисекундами, и на экране это то же самое: пики и провалы
+    каждого столбца на месте. Редкая линия - None (рисуется как есть)."""
+    if len(points) <= max(1, columns) or x1 <= x0:
+        return None
+    k = columns / (x1 - x0)
+    out, col = [], None
+    for x, y in points:
+        c = min(columns - 1, int((x - x0) * k))
+        if c != col:
+            out.append([x, y, y, x])
+            col = c
+        else:
+            b = out[-1]
+            b[1], b[2], b[3] = min(b[1], y), max(b[2], y), x
+    return [((b[0] + b[3]) / 2 if 0 < n < len(out) - 1 else (b[0] if n == 0 else b[3]), b[1], b[2])
+            for n, b in enumerate(out)]
+
+
 def group(v):
     """Целое с пробелами по тысячам: 12 500."""
     return f"{int(round(v)):,}".replace(",", " ")
@@ -204,6 +235,8 @@ class ChartCard(QWidget):
         self.y_label = y_label
         self.theme = "dark"
         self.clipped = []
+        self.labels = []                # [(текст, QRectF)] - всё написанное при последней отрисовке
+        self.drawn_points = 0           # вершин линий при последней отрисовке (густые - полосой)
         self.shown_empty = False        # последняя отрисовка - заглушка
         self.setMinimumSize(280, self.HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -252,6 +285,24 @@ class ChartCard(QWidget):
         if text and text not in self.clipped:
             self.clipped.append(text)
 
+    def put(self, p, rect, flags, text):
+        """Написать text в rect и запомнить, где он на самом деле лёг (для overlaps)."""
+        if not text:
+            return
+        p.drawText(rect, flags, text)
+        br = p.boundingRect(QRectF(rect), flags, text)
+        self.labels.append((text, br))
+
+    def overlaps(self):
+        """Пары надписей, что налезают друг на друга (касание краями - не в счёт)."""
+        out = []
+        boxes = [(t, r.adjusted(0.5, 0.5, -0.5, -0.5)) for t, r in self.labels]
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                if boxes[i][1].intersects(boxes[j][1]):
+                    out.append((boxes[i][0], boxes[j][0]))
+        return out
+
     def frame(self, p):
         """Карточка, заголовок и легенда. Возвращает верх области графика.
         Легенда - куски (серия целиком); не влезает в строку заголовка - идёт строками ниже."""
@@ -278,7 +329,7 @@ class ChartCard(QWidget):
             self.note_clip(self.title)
             title = fm.elidedText(title, Qt.TextElideMode.ElideRight, head_w)
         p.setPen(QColor(pal["text"]))
-        p.drawText(QRectF(PAD, 8, head_w, 22), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
+        self.put(p, QRectF(PAD, 8, head_w, 22), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
         if not chunks:
             return 42
         if one_line:
@@ -307,7 +358,7 @@ class ChartCard(QWidget):
                 for text, key in chunk:
                     w = fm.horizontalAdvance(text)
                     p.setPen(QColor(pal[key]))
-                    p.drawText(QRectF(x, y, w + 1, 22), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+                    self.put(p, QRectF(x, y, w + 1, 22), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
                     x += w
             y += 20
         return 42 if one_line else 42 + 20 * len(rows) - 2
@@ -323,7 +374,7 @@ class ChartCard(QWidget):
                                             Qt.TextFlag.TextWordWrap, self.empty_text)
         if need.height() > box.height():
             self.note_clip(self.empty_text)
-        p.drawText(box, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, self.empty_text)
+        self.put(p, box, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, self.empty_text)
         self.shown_empty = True
 
     def left_margin(self, labels):
@@ -345,8 +396,8 @@ class ChartCard(QWidget):
             text = tick_text(v, step, percent)
             if not self.fits(p.fontMetrics(), text, plot.left() - 8 - (18 if self.y_label else 0)):
                 self.note_clip(text)
-            p.drawText(QRectF(2, y - 8, plot.left() - 8, 16),
-                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
+            self.put(p, QRectF(2, y - 8, plot.left() - 8, 16),
+                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
         if self.y_label:
             fm = p.fontMetrics()
             if not self.fits(fm, self.y_label, plot.height()):
@@ -364,11 +415,13 @@ class ChartCard(QWidget):
         if not self.fits(fm, self.x_label, plot.width()):
             self.note_clip(self.x_label)
         p.setPen(QColor(self.pal()["muted"]))
-        p.drawText(QRectF(plot.left(), plot.bottom() + 24, plot.width(), 16),
-                   Qt.AlignmentFlag.AlignHCenter, self.x_label)
+        self.put(p, QRectF(plot.left(), plot.bottom() + 24, plot.width(), 16),
+                 Qt.AlignmentFlag.AlignHCenter, self.x_label)
 
     def paintEvent(self, event):
         self.clipped = []
+        self.labels = []
+        self.drawn_points = 0
         self.shown_empty = False
         p = QPainter(self)
         top = self.frame(p)
@@ -476,30 +529,49 @@ class LineChart(ChartCard):
             x = at(t, y0).x()
             text = xtext(t)
             p.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + 4))
-            p.drawText(QRectF(x - 40, plot.bottom() + 6, 80, 14), Qt.AlignmentFlag.AlignHCenter, text)
+            self.put(p, QRectF(x - 40, plot.bottom() + 6, 80, 14), Qt.AlignmentFlag.AlignHCenter, text)
         self.x_title(p, plot)
 
+        columns = max(1, min(MAX_COLUMNS, int(plot.width() / 3)))     # столбец полосы - от 3 пикселей
+
         def path(points, steps=False):
-            line = QPainterPath(at(*points[0]))
-            prev = points[0][1]
-            for x, y in points[1:]:
-                if steps:
-                    line.lineTo(at(x, prev))
-                line.lineTo(at(x, y))
-                prev = y
-            return line
+            """(линия, верх для заливки, густая ли): густая - полоса между огибающими."""
+            band = envelope(points, x0, x1, columns)
+            if band is None:
+                self.drawn_points += len(points)
+                line = QPainterPath(at(*points[0]))
+                prev = points[0][1]
+                for x, y in points[1:]:
+                    if steps:
+                        line.lineTo(at(x, prev))
+                    line.lineTo(at(x, y))
+                    prev = y
+                return line, line, False
+            self.drawn_points += 2 * len(band)
+            top = QPainterPath(at(band[0][0], band[0][2]))
+            for x, _, hi in band[1:]:
+                top.lineTo(at(x, hi))
+            line = QPainterPath(top)
+            for x, lo, _ in reversed(band):
+                line.lineTo(at(x, lo))
+            line.closeSubpath()
+            return line, top, True
+
+        def stroke(line, dense, colour, width):
+            p.setPen(QPen(colour, width * (0.6 if dense else 1)))
+            p.setBrush(colour if dense else Qt.BrushStyle.NoBrush)
+            p.drawPath(line)
 
         for i in range(len(self.series) - 1, 0, -1):
             _, key, pts = self.series[i]
             if len(pts) < 2:
                 continue
-            p.setPen(QPen(QColor(pal[key]), 1.6))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawPath(path(pts, i in self.stepped))
+            line, _, dense = path(pts, i in self.stepped)
+            stroke(line, dense, QColor(pal[key]), 1.6)
         colour = QColor(pal[self.series[0][1]])
-        line = path(self.points, 0 in self.stepped)
+        line, top, dense = path(self.points, 0 in self.stepped)
         base = 0.0 if y0 <= 0 <= y1 else y0          # заливка - до нуля или до низа шкалы
-        fill = QPainterPath(line)
+        fill = QPainterPath(top)
         fill.lineTo(at(self.points[-1][0], base))
         fill.lineTo(at(self.points[0][0], base))
         fill.closeSubpath()
@@ -513,9 +585,7 @@ class LineChart(ChartCard):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(grad)
         p.drawPath(fill)
-        p.setPen(QPen(colour, 2.2))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(line)
+        stroke(line, dense, colour, 2.2)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(colour)
         p.drawEllipse(at(*self.points[-1]), 3.5, 3.5)
@@ -561,8 +631,8 @@ class BarChart(ChartCard):
             hi = max([v for _, _, vals in self.series for v in vals] or [1.0]) or 1.0
             y0, y1, ticks, step = y_scale(0.0, hi)
         left = self.left_margin([tick_text(v, step, self.percent) for v in ticks])
-        plot = QRectF(left, top + (6 if not self.percent else 0), self.width() - left - 16,
-                      self.height() - top - BOTTOM - (6 if not self.percent else 0))
+        room = VALUE_ROOM               # числа над столбиками - в своём запасе, не на легенде
+        plot = QRectF(left, top + room, self.width() - left - 16, self.height() - top - BOTTOM - room)
         self.y_grid(p, plot, ticks, y0, y1, step, self.percent)
         n, m = len(self.groups), len(self.series)
         slot = plot.width() / n
@@ -582,7 +652,7 @@ class BarChart(ChartCard):
                 text = self.fmt(v)
                 if fm.horizontalAdvance(text) <= bar + 10:
                     p.setPen(QColor(pal["text"]))
-                    p.drawText(QRectF(x - 8, plot.bottom() - h - 15, bar + 16, 14), Qt.AlignmentFlag.AlignHCenter, text)
+                    self.put(p, QRectF(x - 8, plot.bottom() - h - 15, bar + 16, 14), Qt.AlignmentFlag.AlignHCenter, text)
                 x += bar
             box = QRect(int(cx - slot / 2 + 2), int(plot.bottom() + 6), int(slot - 4), 30)
             need = fm.boundingRect(QRect(0, 0, int(box.width() / SLACK), 1000), Qt.TextFlag.TextWordWrap, label)
@@ -590,7 +660,7 @@ class BarChart(ChartCard):
             if need.height() > box.height() or not words_fit:
                 self.note_clip(label)
             p.setPen(QColor(pal["muted"]))
-            p.drawText(box, Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextWordWrap, label)
+            self.put(p, box, Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextWordWrap, label)
 
 
 # --- сетка карточек ------------------------------------------------------------------------

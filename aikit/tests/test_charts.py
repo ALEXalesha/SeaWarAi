@@ -84,6 +84,7 @@ def test_standard_charts_keep_all_labels(qapp, lang, width):
             for c in g.charts():
                 drawn(c, width)
                 assert c.clipped == [], (type(c).__name__, c.title, c.clipped)
+                assert c.overlaps() == [], (type(c).__name__, c.title, width, c.overlaps())
                 assert c.shown_empty == (not data)
 
 
@@ -200,3 +201,63 @@ def test_numbers_in_legend_have_no_trailing_zero():
     from aikit.charts import num
     assert num(86.04, " с") == "86 с"
     assert num(86.4) == "86.4" and num(3.25) == "3.25" and num(12500) == "12 500" and num(-4) == "-4"
+
+
+def test_bar_values_stand_above_bars_not_on_the_legend(qapp):
+    """Проверка графиков 17.10: в узкой карточке легенда уходит на вторую строку, а число
+    «100%» над полным столбиком рисовалось на ней (у долей не было запаса высоты)."""
+    from aikit.charts import BarChart, outcome_bars
+    for width in (300, 330, 437, 560):
+        for lang in ("ru", "en"):
+            b = BarChart("Итоги по уровням ИИ" if lang == "ru" else "Results by AI level", "x")
+            outcome_bars(b, [{"n": 1, "level": "medium", "outcome": "win"},
+                             {"n": 2, "level": "novice", "outcome": "draw"},
+                             {"n": 3, "level": "strong", "outcome": "loss"}], LEVELS, NAMES[lang], lang)
+            drawn(b, width)
+            assert any(t == "100%" for t, _ in b.labels)
+            assert b.overlaps() == [], (width, lang, b.overlaps())
+    n = BarChart("Сила ИИ", "x", percent=False)
+    n.set_data(["a", "b"], [("линий в среднем", "accent", [12500.0, 3.0]), ("ещё одна серия", "good", [9000.0, 1.0])])
+    drawn(n, 300)
+    assert n.overlaps() == []
+
+
+def test_overlaps_are_noticed(qapp):
+    """Закон выше не пустой: надписи, нарочно положенные друг на друга, видны в overlaps."""
+    from PySide6.QtCore import QRectF
+    from aikit.charts import LineChart
+    c = LineChart("Доля", "x")
+    c.labels = [("a", QRectF(0, 0, 20, 10)), ("b", QRectF(10, 5, 20, 10)), ("c", QRectF(30, 0, 10, 10))]
+    assert c.overlaps() == [("a", "b")]
+
+
+def test_envelope_keeps_peaks_and_dips_of_every_column():
+    from aikit.charts import envelope
+    rnd = random.Random(3)
+    pts = [(float(i + 1), float(rnd.randint(0, 400))) for i in range(5000)]
+    band = envelope(pts, 1.0, 5000.0, 400)
+    assert len(band) == 400
+    assert band[0][0] == 1.0 and band[-1][0] == 5000.0
+    k = 400 / 4999.0
+    cols = {}
+    for x, y in pts:
+        cols.setdefault(min(399, int((x - 1.0) * k)), []).append(y)
+    assert [(lo, hi) for _, lo, hi in band] == [(min(cols[c]), max(cols[c])) for c in sorted(cols)]
+    assert [x for x, _, _ in band] == sorted(x for x, _, _ in band)
+    assert envelope(pts[:300], 1.0, 300.0, 400) is None          # редкая линия - как есть
+
+
+def test_long_journal_draws_quickly(qapp):
+    """5000 партий: густая линия рисуется полосой (2 вершины на столбец) - раньше карточка
+    с шумной линией рисовалась до 1,4 с процессорного времени, страница - секунды."""
+    import time
+    from aikit.charts import LineChart
+    rnd = random.Random(5)
+    c = LineChart("Длина партии", "x", percent=False)
+    c.set_points([(i + 1, rnd.randint(20, 400)) for i in range(5000)])
+    drawn(c, 900)
+    assert 0 < c.drawn_points <= 900
+    t0 = time.process_time()
+    for _ in range(3):
+        c.grab()
+    assert (time.process_time() - t0) / 3 < 0.15

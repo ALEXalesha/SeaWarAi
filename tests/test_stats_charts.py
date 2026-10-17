@@ -13,12 +13,13 @@ def labels_intact(app, win, g):
         for lang in ("ru", "en"):
             win.ctx.set_theme(theme)
             win.ctx.set_lang(lang)
-            for width in (1400, win.minimumWidth()):
+            for width in (1400, 3840, win.minimumWidth()):
                 win.resize(width, 820)
                 app.processEvents()
                 for c in all_charts(g.stats):
                     c.grab()
                     assert c.clipped == [], (theme, lang, width, c.title, c.clipped)
+                    assert c.overlaps() == [], (theme, lang, width, c.title, c.overlaps())
                     assert c.theme == theme
     win.ctx.set_theme("dark")
     win.ctx.set_lang("ru")
