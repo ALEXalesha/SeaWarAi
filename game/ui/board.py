@@ -10,7 +10,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from aikit import theme
+
 from game.core.battle import HIT, MISS, SUNK, UNKNOWN
 from game.core.rules import FLEET, LETTERS, SIZE, Rules, can_place, ship_cells
 
@@ -24,15 +24,17 @@ def mix(a, b, t):
 
 
 def colors(theme_name):
-    p = theme.palette(theme_name)
-    water = mix(p["surface"], p["accent"], 0.16)
+    """Цвета поля - из палитры меню «штурманская рубка» (game.ui.menu.PALETTES): ночное море
+    или морская карта на бумаге, сонарный цвет для «можно», сигнальный - для тепла."""
+    from game.ui.menu import palette
+    p = palette(theme_name)
     return {
-        "bg": QColor(p["bg"]), "water": water, "line": mix(water, p["accent"], 0.45),
-        "coord": QColor(p["muted"]), "ship": QColor(p["sq_dark"]), "ship_edge": QColor(p["text"]),
-        "hit": QColor(p["bad"]), "miss": QColor(p["muted"]), "auto": mix(water, p["muted"], 0.45),
-        "sunk": mix(p["sq_dark"], p["bg"], 0.45), "heat": QColor(p["capture_hint"]), "hover": QColor(p["accent"]),
-        "ok": QColor(p["good"]), "bad": QColor(p["bad"]), "text": QColor(p["text"]),
-        "last": QColor(p["last_move"]),
+        "bg": QColor(p["bg"]), "water": QColor(p["water"]), "line": QColor(p["line"]),
+        "coord": QColor(p["coord"]), "ship": QColor(p["ship"]), "ship_edge": QColor(p["ship_edge"]),
+        "hit": QColor(p["hit"]), "miss": QColor(p["miss"]), "auto": QColor(p["auto"]),
+        "sunk": QColor(p["sunk"]), "heat": QColor(p["heat"]), "hover": QColor(p["sonar"]),
+        "ok": QColor(p["ok"]), "bad": QColor(p["bad"]), "text": QColor(p["ink"]),
+        "last": QColor(p["last"]),
     }
 
 

@@ -209,7 +209,7 @@ def test_language_and_theme_switch_on_the_fly(app, win):
     g = win.game
     g.start_battle(seed=1, fleet=HAND)
     g.ctx.set_lang("en")
-    assert g.menu.play_button.text() == "Play" and g.play.own.title == "Your fleet"
+    assert g.menu.play_button.text() == "PLAY" and g.play.own.title == "Your fleet"   # меню - прописными
     texts = [w.text() for w in win.findChildren(QLabel)]
     assert not any(t in RU for t in texts if t)          # нигде не торчит ключ вместо текста
     g.ctx.set_theme("light")

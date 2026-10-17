@@ -51,6 +51,14 @@ def selftest(out_path):
         window, ctx = make_window(GAME_INFO, create_widget, APP_NAME, root=home)
         window.show()
         g = window.game
+        app.processEvents()
+        from aikit.menu import layout_problems
+        if g.current_page() != "menu":
+            raise RuntimeError("окно открылось не меню")
+        bad = layout_problems(g.menu)
+        if bad:
+            raise RuntimeError("меню обрезано: " + "; ".join(bad[:3]))
+        lines.append("меню: открыто первым, раскладка цела")
         g.change("anim_ms", 0)
         g.change("delay_ms", 0)
         for level, thoughts in (("strong", True), ("medium", False)):

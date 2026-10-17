@@ -78,8 +78,10 @@ def main(out):
         g.change("delay_ms", 0)
         g.change("level", "strong")
         g.show_page("menu")
+        g.menu.set_time(1.3)                    # луч сонара только что прошёл по отметкам
         settle(app)
         shots.append((window.grab(), f"preview_menu{suffix}.png"))
+        g.menu.set_time(None)
         g.show_page("setup")
         g.setup.board.set_fleet(uniform_fleet(np.random.default_rng(21))[:7])
         settle(app)

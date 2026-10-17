@@ -10,7 +10,7 @@ import random
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
                                QLabel, QListWidget, QScrollArea, QSlider, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
@@ -19,7 +19,7 @@ from aikit import settings as st
 from aikit import gamelog, theme
 from aikit.charts import GameCharts
 from aikit.storage import is_int, load_json, save_json
-from aikit.widgets import Combo, button, card, label, restyle, segmented
+from aikit.widgets import Combo, button, card, label, restyle
 from game.ai.agents import LEVELS
 from game.ai.habits import Habits
 from game.ai.prob import uniform_fleet
@@ -27,6 +27,8 @@ from game.core.rules import Rules, cell_name, valid_fleet
 from game.ui.ai_thread import AiController
 from game.ui.board import BoardWidget, SetupBoard
 from game.ui.i18n import translator
+from game.ui.menu import MenuPage, page_qss, side_qss
+from game.ui.menu import palette as sea_palette
 from game.ui.session import Session
 from game.version import VERSION
 
@@ -69,89 +71,6 @@ def scroll_page(margins=(26, 22, 26, 22)):
 def load_passport():
     with open(PASSPORT, encoding="utf-8") as f:
         return json.load(f)
-
-
-# --- меню ---
-
-
-class MenuPage(QWidget):
-    def __init__(self, gw):
-        super().__init__()
-        self.gw = gw
-        self.setObjectName("page")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        outer = QVBoxLayout(self)
-        outer.addStretch(2)
-        col = QVBoxLayout()
-        col.setSpacing(10)
-        col.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        from game.ui.icon import render
-        self.logo = QLabel()
-        self.logo.setPixmap(QPixmap.fromImage(render(104)))
-        col.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.title = label("", "title")
-        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        col.addWidget(self.title)
-        self.sub = label("", "muted", wrap=True)
-        self.sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.sub.setFixedWidth(620)
-        col.addWidget(self.sub, 0, Qt.AlignmentFlag.AlignHCenter)
-        col.addSpacing(12)
-        box = card()
-        box.setMaximumWidth(660)
-        grid = QGridLayout(box)
-        grid.setContentsMargins(22, 18, 22, 18)
-        grid.setHorizontalSpacing(18)
-        grid.setVerticalSpacing(12)
-        self.captions = {}
-
-        def row(r, key, widget):
-            cap = label("", "muted")
-            self.captions[key] = cap
-            grid.addWidget(cap, r, 0)
-            grid.addWidget(widget, r, 1)
-
-        w, self.level_buttons = segmented({lv: "" for lv in LEVELS}, lambda v: gw.change("level", v))
-        row(0, "level", w)
-        w, self.mode_buttons = segmented({"play": "", "demo": ""}, lambda v: gw.change("mode", v))
-        row(1, "mode", w)
-        w, self.touch_buttons = segmented({False: "", True: ""}, lambda v: gw.change("corners", v))
-        row(2, "touch", w)
-        col.addWidget(box, 0, Qt.AlignmentFlag.AlignHCenter)
-        col.addSpacing(8)
-        self.play_button = button("", "menuPrimary", lambda: gw.play_clicked())
-        self.stats_button = button("", "menu", lambda: gw.show_page("stats"))
-        self.settings_button = button("", "menu", lambda: gw.show_page("settings"))
-        for b in (self.play_button, self.stats_button, self.settings_button):
-            col.addWidget(b, 0, Qt.AlignmentFlag.AlignHCenter)
-        outer.addLayout(col)
-        outer.addStretch(3)
-        self.foot = label("", "hint")
-        self.foot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        outer.addWidget(self.foot)
-
-    def sync(self, s):
-        self.level_buttons[s["level"]].setChecked(True)
-        self.mode_buttons[s["mode"]].setChecked(True)
-        self.touch_buttons[s["corners"]].setChecked(True)
-
-    def retranslate(self):
-        t = self.gw.t
-        self.title.setText(t("app_title"))
-        self.sub.setText(t("app_sub"))
-        for key, cap in self.captions.items():
-            cap.setText(t(key))
-        for k, b in self.level_buttons.items():
-            b.setText(t(k))
-        for k, b in self.mode_buttons.items():
-            b.setText(t("mode_" + k))
-        self.touch_buttons[False].setText(t("touch_strict"))
-        self.touch_buttons[True].setText(t("touch_corners"))
-        self.play_button.setText(t("play"))
-        self.stats_button.setText(t("stats"))
-        self.settings_button.setText(t("settings"))
-        self.foot.setText(t("footer", v=VERSION))
-        self.sync(self.gw.settings)
 
 
 # --- расстановка ---
@@ -240,6 +159,8 @@ class PlayPage(QWidget):
         scroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }")
         outer.addWidget(scroll)
         body = QWidget()
+        self.body = body
+        self.scroll = scroll
         scroll.setWidget(body)
         col = QVBoxLayout(body)
         col.setContentsMargins(16, 14, 16, 14)
@@ -464,13 +385,16 @@ class SettingsPage(QWidget):
         self.menu_button = button("", None, lambda: gw.show_page("menu"))
         top.addWidget(self.menu_button)
         col.addLayout(top)
+        # карточка на всю ширину страницы, как карточки статистики (автор 17.10: настройки
+        # не должны стоять узкой колонкой у левого края); подписи - 3 части, поля - 2
         box = card()
-        box.setMaximumWidth(760)
+        self.box = box
         self.grid = QGridLayout(box)
         self.grid.setContentsMargins(22, 18, 22, 18)
         self.grid.setHorizontalSpacing(22)
         self.grid.setVerticalSpacing(16)
-        self.grid.setColumnStretch(0, 1)
+        self.grid.setColumnStretch(0, 3)
+        self.grid.setColumnStretch(1, 2)
         self.rows = {}
         self.theme_combo = Combo()
         for k in theme.THEMES:
@@ -617,11 +541,22 @@ class GameWidget(QWidget):
             self.settings_page.sync()
         elif name == "menu":
             self.menu.sync(self.settings)
+            self.refresh_menu()
         elif name == "setup":
             self.setup.board.set_rules(self.rules())
             if not valid_fleet(self.setup.board.fleet(), self.rules()) and self.setup.board.complete():
                 self.setup.board.clear()
             self.setup.retranslate()
+
+    def refresh_menu(self):
+        """Нижняя строка меню: партии, победы, рекорд (меньше всего выстрелов до победы)."""
+        t = self.t
+        totals = self.ctx.stats.totals()
+        recs = self.records()
+        best = min(recs.values()) if recs else None
+        text = t("menu_foot", games=totals["games"], wins=totals["wins"])
+        text += " · " + (t("menu_best", n=best) if best else t("menu_no_best"))
+        self.menu.set_foot(text + " · " + t("footer", v=VERSION))
 
     def change(self, key, value):
         if self.settings[key] == value:
@@ -651,6 +586,12 @@ class GameWidget(QWidget):
 
     def apply_theme(self):
         c = theme.palette(self.ctx.theme)
+        sea = sea_palette(self.ctx.theme)
+        self.menu.set_theme(self.ctx.theme)
+        # расстановка, бой и боковая панель - в стиле меню (автор 17.10: и боковые панели свои)
+        for page in (self.setup, self.play):
+            page.setStyleSheet(page_qss(sea))
+        self.play.side.setStyleSheet(side_qss(sea))
         for b in (self.play.own, self.play.enemy, self.setup.board):
             b.set_theme(self.ctx.theme, self.ctx.lang)
         self.stats.charts.set_theme(self.ctx.theme)
@@ -662,6 +603,7 @@ class GameWidget(QWidget):
         for b in (self.play.own, self.play.enemy, self.setup.board):
             b.set_theme(self.ctx.theme, self.ctx.lang)
         self.menu.retranslate()
+        self.refresh_menu()
         self.setup.retranslate()
         self.play.retranslate()
         self.settings_page.retranslate()
@@ -676,6 +618,7 @@ class GameWidget(QWidget):
         if self.hidden:
             return
         self.hidden = True
+        self.menu.pause()
         self._invalidate()
         for b in (self.play.own, self.play.enemy):
             b.stop()
@@ -685,6 +628,7 @@ class GameWidget(QWidget):
         if not self.hidden:
             return
         self.hidden = False
+        self.menu.resume()
         if self.session is not None and self.current_page() == "play":
             self.after_change()
 

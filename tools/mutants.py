@@ -94,3 +94,25 @@ MUTANTS += [
     ("charts: выстрелы до победы и у поражения", W, '            if outcome == "win":\n                game["win_shots"]', '            if True:\n                game["win_shots"]', TSC),
     ("charts: рекорд - больше выстрелов", W, 'score_key="win_shots", score_better="min"', 'score_key="win_shots", score_better="max"', TSC),
 ]
+
+# стартовое меню, боковая панель в его стиле, растянутые настройки (автор 17.10)
+MN = "game/ui/menu.py"
+TM = "tests/test_menu.py"
+MUTANTS += [
+    ("menu: сонар тикает на паузе вкладки", W, "        self.hidden = True\n        self.menu.pause()",
+     "        self.hidden = True", TM + " -k lives"),
+    ("menu: сонар на колонке меню", MN, "        left = max(self.free_left, w * 0.1)", "        left = w * 0.1", TM + " -k whole"),
+    ("menu: сонар за краем", MN, "        r = max(40.0, min(h * 0.40, (w - left) / 2 - 18))",
+     "        r = max(40.0, h * 0.40)", TM + " -k whole"),
+    ("menu: не растёт на 4K", MN, "        return round(max(1.0, min(2.4, w / 1280, h / 800)), 2)", "        return 1.0",
+     TM + " -k scales"),
+    ("menu: колонка шире окна", MN, "        return round(min(560 * self.scale, max(430, self.width() * 0.46)))",
+     "        return round(560 * self.scale * 1.4)", TM + " -k whole"),
+    ("menu: след луча не гаснет", MN, "    return max(0.0, 1.0 - behind / 300.0) ** 2", "    return 1.0", TM + " -k glow"),
+    ("menu: боковая панель общего вида", W, "        self.play.side.setStyleSheet(side_qss(sea))", "        pass",
+     TM + " -k side_panel"),
+    ("menu: поля в общих цветах", "game/ui/board.py", '"water": QColor(p["water"])', '"water": QColor(p["bg2"])',
+     TM + " -k side_panel"),
+    ("menu: настройки узкой колонкой", W, "        self.box = box\n", "        self.box = box\n        box.setMaximumWidth(760)\n",
+     TM + " -k stretches"),
+]

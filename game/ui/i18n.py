@@ -66,6 +66,9 @@ RU = {
                                          "(партий в памяти: {n}). Сильный уровень этим пользуется.",
     "habits_reset": "Забыть", "saved_note": "Настройки сохраняются сразу.",
     "footer": "SeaWarAi {v} · ИИ видит только результаты своих выстрелов",
+    "menu_tag": "ПОЛЕ 10×10 · ЭСКАДРА 10 КОРАБЛЕЙ · ВАХТА ИИ",
+    "menu_foot": "партий {games} · побед {wins}", "menu_best": "рекорд {n} выстрелов",
+    "menu_no_best": "рекорда пока нет",
     "error": "Ошибка ИИ: {e}",
 }
 
@@ -134,6 +137,9 @@ EN = {
                                        "(games remembered: {n}). The strong level uses this.",
     "habits_reset": "Forget", "saved_note": "Settings are saved at once.",
     "footer": "SeaWarAi {v} · the AI only sees the results of its own shots",
+    "menu_tag": "GRID 10×10 · FLEET OF 10 SHIPS · AI ON WATCH",
+    "menu_foot": "games {games} · wins {wins}", "menu_best": "record {n} shots",
+    "menu_no_best": "no record yet",
     "error": "AI error: {e}",
 }
 

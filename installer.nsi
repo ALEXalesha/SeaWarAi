@@ -1,7 +1,7 @@
 Unicode true
 
 !define APP "SeaWarAi"
-!define VERSION "0.1.0"
+!define VERSION "1.0.0"
 !define PUBLISHER "ALEXaloysha"
 !define REGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP}"
 

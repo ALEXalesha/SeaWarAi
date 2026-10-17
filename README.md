@@ -20,7 +20,11 @@
 - Three AI levels: **novice**, **medium**, **strong**, plus an **AI vs AI** demo with both fleets open.
 - **AI thoughts**: a heat map on your board showing where the AI wants to shoot next.
 - The AI **learns your habits**: where you usually put your ships and where you shoot first. You can make it forget them in the settings.
+- **A "navigator's bridge" start menu of its own**: a night sea with a chart grid, a sonar on the right - the beam turns, ship contacts flash as it passes, rings spread from hits, waves roll along the bottom. Plate buttons with a stripe on the left, capsule toggles, a nautical Cambria title. The light theme is a paper sea chart. Fleet placement, the boards and the battle side panel share its colours. The menu grows with the window up to 4K.
+- **Settings span the whole window**, like the statistics.
 - Animated splashes and blasts, synthesized sounds, Paint themes (dark and light), Russian and English, the window reopens where it was closed.
+
+<img src="docs/preview_menu.png" width="880" alt="Start menu: buttons and level choice on the left, a sonar on the right">
 
 <img src="docs/preview_setup_light.png" width="640" alt="Placing the fleet: ships on the board, three single-deck ships still in the dock">
 
@@ -58,6 +62,10 @@
 
 **Why not 45 shots?** Under Russian rules about 41 of the 100 cells get marked automatically around sunk ships, and at the end of a game only about 4 cells are still unknown. So any shooter needs roughly 100 − 41 − 4 ≈ 55 shots, and the AI's skill decides the last few. The probability map is not the bottleneck: it is calibrated, and choosing the shot by information gain did not help.
 
+## Download
+
+Windows builds (installer and portable archive) are in [Releases](../../releases). The builds are not code-signed, so SmartScreen may warn on first start.
+
 ## Run
 
 ```
@@ -65,7 +73,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Python 3.13, PySide6 and numpy. Checks: `pip install -r requirements-dev.txt`, then `python -m pytest`. Mutation check: `python tools/mutate.py` breaks every rule and every AI piece on purpose, one at a time, and the tests must notice.
+Python 3.13, PySide6 and numpy. Checks: `pip install -r requirements-dev.txt`, then `python -m pytest`. Mutation check: `python tools/mutate.py` breaks every rule and every AI piece on purpose, one at a time, and the tests must notice. 273 checks and 52 mutants, all caught; the menu laws (`tests/test_menu.py`) check that the menu, fleet placement and the side panel are whole from the smallest window to 4K in both themes and languages, the sonar never covers the buttons, and settings take the full width.
 
 ## License
 
