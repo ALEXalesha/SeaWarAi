@@ -86,12 +86,23 @@ class BoardWidget(QWidget):
 
     # --- геометрия ---
 
+    @staticmethod
+    def bands(cell):
+        """Место под подписи: сверху под буквы, слева под цифры. Растёт с клеткой - шрифт подписей
+        тоже растёт (36 % клетки); постоянные 24 и 30 px на 2560x1440 срезали низ букв, а на
+        3840x2160 - половину букв и «1» у «10» (проверка 17.10)."""
+        return max(24.0, cell * 0.56), max(30.0, cell * 0.78)
+
     def geometry_(self):
         """(x0, y0, клетка): поле квадратное, слева и сверху место под подписи."""
         top = 28 if self.title else 0
         cell = max(8.0, min((self.width() - 30) / SIZE, (self.height() - 26 - top) / SIZE))
-        x0 = (self.width() - cell * SIZE + 26) / 2
-        y0 = top + 24 + max(0.0, (self.height() - top - 26 - cell * SIZE) / 2)
+        for _ in range(3):                 # полосы подписей зависят от клетки - уточнить
+            bt, bl = self.bands(cell)
+            cell = max(8.0, min((self.width() - bl) / SIZE, (self.height() - bt - 2 - top) / SIZE))
+        bt, bl = self.bands(cell)
+        x0 = (self.width() - cell * SIZE + bl) / 2
+        y0 = top + bt + max(0.0, (self.height() - top - bt - 2 - cell * SIZE) / 2)
         return x0, y0, cell
 
     def cell_rect(self, x):
@@ -172,16 +183,21 @@ class BoardWidget(QWidget):
             f.setBold(True)
             p.setFont(f)
             p.setPen(c["text"])
-            p.drawText(QRectF(0, y0 - 52, self.width(), 24), Qt.AlignmentFlag.AlignCenter, self.title)
+            bt, _ = self.bands(cell)
+            p.drawText(QRectF(0, y0 - bt - 28, self.width(), 24), Qt.AlignmentFlag.AlignCenter, self.title)
         f = QFont(self.font())
         f.setPixelSize(max(10, int(cell * 0.36)))
         p.setFont(f)
         p.setPen(c["coord"])
         letters = LETTERS.get(self.lang, LETTERS["ru"])
+        bt, bl = self.bands(cell)
+        self.label_boxes = []              # (текст, место) - закон «подписи целы и не на сетке»
         for i in range(SIZE):
-            p.drawText(QRectF(x0 + i * cell, y0 - 22, cell, 20), Qt.AlignmentFlag.AlignCenter, letters[i])
-            p.drawText(QRectF(x0 - 30, y0 + i * cell, 26, cell),
-                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(i + 1))
+            top_box = QRectF(x0 + i * cell, y0 - bt + 2, cell, bt - 4)
+            left_box = QRectF(x0 - bl, y0 + i * cell, bl - 4, cell)
+            p.drawText(top_box, Qt.AlignmentFlag.AlignCenter, letters[i])
+            p.drawText(left_box, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(i + 1))
+            self.label_boxes += [(letters[i], top_box), (str(i + 1), left_box)]
         p.fillRect(QRectF(x0, y0, cell * SIZE, cell * SIZE), c["water"])
         p.end()
         self._bg_key, self._bg = key, pix
@@ -320,9 +336,11 @@ class SetupBoard(BoardWidget):
 
     def geometry_(self):
         cell = max(8.0, min((self.width() - 60) / (SIZE + 6), (self.height() - 30) / SIZE))
-        x0 = 34.0
-        y0 = 24.0
-        return x0, y0, cell
+        for _ in range(3):
+            bt, bl = self.bands(cell)
+            cell = max(8.0, min((self.width() - bl - 30) / (SIZE + 6), (self.height() - bt - 6) / SIZE))
+        bt, bl = self.bands(cell)
+        return bl + 4, bt, cell
 
     def dock_slots(self):
         """Прямоугольники непоставленных кораблей на причале справа от поля: по убыванию

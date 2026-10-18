@@ -17,8 +17,8 @@
 """
 from PySide6.QtCore import QElapsedTimer, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter
-from PySide6.QtWidgets import (QAbstractButton, QComboBox, QLabel, QScrollArea, QSizePolicy,
-                               QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QCheckBox, QComboBox, QLabel, QRadioButton, QScrollArea,
+                               QSizePolicy, QWidget)
 
 
 class Backdrop(QWidget):
@@ -209,6 +209,15 @@ def _name(w):
     return f"{type(w).__name__}({w.objectName() or '-'}, «{str(text)[:24]}»)"
 
 
+def descender_deficit(fm, text):
+    """На сколько px хвосты букв (р, у, д) уходят ниже, чем обещает шрифт. У Cambria в Qt нижний
+    вынос шрифта 0 - высота подписи только под верх букв, и хвосты срезаются («одному» читалось
+    как «одномv», Морской бой, проверка 17.10)."""
+    if not text:
+        return 0.0
+    return max(0.0, fm.tightBoundingRect(text).bottom() - fm.descent())
+
+
 def text_clipped(w):
     """Текст виджета не влезает в его размер."""
     if isinstance(w, Title):
@@ -218,14 +227,19 @@ def text_clipped(w):
         if not text or w.textFormat() == Qt.TextFormat.RichText or "<" in text:
             return False
         r = w.contentsRect()
+        fm = QFontMetricsF(w.font())
+        lines = text.split("\n")              # подпись в несколько строк: мерить самую длинную строку
+        deficit = max(descender_deficit(fm, line) for line in lines)
         if w.wordWrap():
-            return w.heightForWidth(w.width()) > w.height()
-        return QFontMetricsF(w.font()).horizontalAdvance(text) > r.width() + 0.5
+            return w.heightForWidth(w.width()) + deficit > w.height() + 1
+        widest = max(fm.horizontalAdvance(line) for line in lines)
+        tall = fm.lineSpacing() * (len(lines) - 1) + fm.height() + deficit
+        return widest > r.width() + 0.5 or tall > r.height() + 1
     if isinstance(w, QAbstractButton):
         if not w.text():
             return False
-        if w.isCheckable():
-            # выбранная пишется жирным (:checked в таблице стилей), а sizeHint - по обычному
+        if w.isCheckable() and not isinstance(w, (QCheckBox, QRadioButton)):
+            # выбранная пишется жирным (флажки - нет) (:checked в таблице стилей), а sizeHint - по обычному
             from aikit.widgets import bold_width
             if bold_width(w) > w.width() + 1:
                 return True

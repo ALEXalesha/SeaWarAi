@@ -61,7 +61,9 @@ def test_window_opens_with_the_menu_and_sonar_lives_only_there(app, win):
     assert g.current_page() == "menu"
     assert isinstance(g.menu, Backdrop) and g.menu.running()
     t0 = g.menu.t
-    pump(app, 0.2)
+    end = time.time() + 2.0                # первый кадр под нагрузкой бывает долгим (шрифты)
+    while g.menu.t <= t0 and time.time() < end:
+        pump(app, 0.05)
     assert g.menu.t > t0
     g.show_page("stats")
     assert not g.menu.running()
@@ -134,7 +136,7 @@ def test_battle_side_panel_in_menu_style_and_whole(app, win, theme, lang):
     win.ctx.set_theme(theme)
     win.ctx.set_lang(lang)
     pal = M.palette(theme)
-    assert "Cambria" in g.play.side.styleSheet() and pal["sonar"] in g.play.side.styleSheet()
+    assert "Constantia" in g.play.side.styleSheet() and pal["sonar"] in g.play.side.styleSheet()
     assert pal["bg"] in g.play.styleSheet() and pal["bg"] in g.setup.styleSheet()
     assert B.colors(theme)["water"].name() == pal["water"]
     for salvo, thoughts in ((False, False), (True, True)):

@@ -98,6 +98,7 @@ MUTANTS += [
 # стартовое меню, боковая панель в его стиле, растянутые настройки (автор 17.10)
 MN = "game/ui/menu.py"
 TM = "tests/test_menu.py"
+TP = "tests/test_pages.py"
 MUTANTS += [
     ("menu: сонар тикает на паузе вкладки", W, "        self.hidden = True\n        self.menu.pause()",
      "        self.hidden = True", TM + " -k lives"),
@@ -115,4 +116,17 @@ MUTANTS += [
      TM + " -k side_panel"),
     ("menu: настройки узкой колонкой", W, "        self.box = box\n", "        self.box = box\n        box.setMaximumWidth(760)\n",
      TM + " -k stretches"),
+    # 18.10: настройки и статистика в стиле рубки (aikit.skin) и находки проверки 17.10
+    ("pages: подписи поля постоянной полосой", "game/ui/board.py",
+     "        return max(24.0, cell * 0.56), max(30.0, cell * 0.78)", "        return 24.0, 30.0", TP + " -k labels"),
+    ("pages: брошенный бой не поражение", W, '            self.ctx.stats.record(s.stats_key(), "loss")\n', "", TP + " -k \"give_up or closing or asks\""),
+    ("pages: меню не продолжает бой", W, "        if self.in_battle():\n            self.show_page(\"play\")\n            self.after_change()",
+     "        if False:\n            self.show_page(\"play\")\n            self.after_change()", TP + " -k continue"),
+    ("pages: N без вопроса", W, "            if not self.confirm_new:", "            if False:", TP + " -k asks"),
+    ("pages: бой без выстрелов - поражение", W, "        if s.human_shots:\n            self.ctx.stats.record",
+     "        if True:\n            self.ctx.stats.record", TP + " -k without_shots"),
+    ("pages: заголовок панели Cambria", MN, 'QLabel#section {{ font-family: "Constantia", "Georgia"; font-size: 17px; font-weight: 700; color: {pal[\'sonar\']}; }}',
+     'QLabel#section {{ font-family: "Cambria", "Georgia"; font-size: 17px; font-weight: 700; color: {pal[\'sonar\']}; }}', TP + " -k heading"),
+    ("pages: настройки общим видом", W, "        super().__init__(SKIN, back=lambda: gw.show_page(\"menu\"))\n        self.gw = gw\n        self.menu_button = self.back_button\n        box = SettingsList()",
+     "        super().__init__(None, back=lambda: gw.show_page(\"menu\"))\n        self.gw = gw\n        self.menu_button = self.back_button\n        box = SettingsList()", TP + " -k unlike"),
 ]

@@ -74,6 +74,52 @@ def glow(angle, beam):
     return max(0.0, 1.0 - behind / 300.0) ** 2
 
 
+def paint_chart(p, w, h, pal, lang):
+    """Ночное море и штурманская сетка с подписями (фон меню и страниц)."""
+    g = QLinearGradient(0, 0, 0, h)
+    g.setColorAt(0, QColor(pal["bg"]))
+    g.setColorAt(1, QColor(pal["bg2"]))
+    p.fillRect(0, 0, w, h, g)
+    cell = max(34.0, h / 13.0)
+    p.setPen(QPen(QColor(pal["grid"]), 1))
+    x = cell * 1.2
+    while x < w:
+        p.drawLine(QPointF(x, cell * 0.8), QPointF(x, h))
+        x += cell
+    y = cell * 0.8
+    while y < h:
+        p.drawLine(QPointF(cell * 1.2, y), QPointF(w, y))
+        y += cell
+    f = QFont("Consolas")
+    f.setPixelSize(max(10, round(cell * 0.32)))
+    p.setFont(f)
+    p.setPen(QColor(pal["coord"]))
+    letters = LETTERS.get(lang, LETTERS["ru"])
+    for i, letter in enumerate(letters):
+        p.drawText(QRectF(cell * 1.2 + i * cell, cell * 0.2, cell, cell * 0.6), int(Qt.AlignmentFlag.AlignCenter), letter)
+    for j in range(10):
+        p.drawText(QRectF(cell * 0.2, cell * 0.8 + j * cell, cell, cell), int(Qt.AlignmentFlag.AlignCenter), str(j + 1))
+
+
+def paint_waves(p, w, h, t, pal):
+    """Три линии волн внизу."""
+    for k in range(3):
+        col = QColor(pal["wave"])
+        col.setAlpha(110 - k * 28)
+        p.setPen(QPen(col, 2.0 + k * 0.6))
+        path = QPainterPath()
+        base = h * (0.86 + k * 0.045)
+        amp = h * (0.010 + 0.004 * k)
+        step = max(6.0, w / 160)
+        x = 0.0
+        path.moveTo(0, base)
+        while x <= w + step:
+            y = base + amp * math.sin(x / (w / (7 + k * 2)) * 2 * math.pi + t * (0.8 + 0.35 * k))
+            path.lineTo(x, y)
+            x += step
+        p.drawPath(path)
+
+
 class Sonar(Backdrop):
     """Фон: ночное море, штурманская сетка, сонар и волны."""
 
@@ -97,49 +143,12 @@ class Sonar(Backdrop):
 
     def paint_scene(self, p, w, h, t):
         pal = palette(self.theme_name)
-        g = QLinearGradient(0, 0, 0, h)
-        g.setColorAt(0, QColor(pal["bg"]))
-        g.setColorAt(1, QColor(pal["bg2"]))
-        p.fillRect(0, 0, w, h, g)
-        # штурманская сетка с подписями
-        cell = max(34.0, h / 13.0)
-        p.setPen(QPen(QColor(pal["grid"]), 1))
-        x = cell * 1.2
-        while x < w:
-            p.drawLine(QPointF(x, cell * 0.8), QPointF(x, h))
-            x += cell
-        y = cell * 0.8
-        while y < h:
-            p.drawLine(QPointF(cell * 1.2, y), QPointF(w, y))
-            y += cell
-        f = QFont("Consolas")
-        f.setPixelSize(max(10, round(cell * 0.32)))
-        p.setFont(f)
-        p.setPen(QColor(pal["coord"]))
-        letters = LETTERS.get(self.lang, LETTERS["ru"])
-        for i, letter in enumerate(letters):
-            p.drawText(QRectF(cell * 1.2 + i * cell, cell * 0.2, cell, cell * 0.6), int(Qt.AlignmentFlag.AlignCenter), letter)
-        for j in range(10):
-            p.drawText(QRectF(cell * 0.2, cell * 0.8 + j * cell, cell, cell), int(Qt.AlignmentFlag.AlignCenter), str(j + 1))
-        self._waves(p, w, h, t, pal)
+        paint_chart(p, w, h, pal, self.lang)
+        paint_waves(p, w, h, t, pal)
         self._scope(p, w, h, t, pal)
 
     def _waves(self, p, w, h, t, pal):
-        for k in range(3):
-            col = QColor(pal["wave"])
-            col.setAlpha(110 - k * 28)
-            p.setPen(QPen(col, 2.0 + k * 0.6))
-            path = QPainterPath()
-            base = h * (0.86 + k * 0.045)
-            amp = h * (0.010 + 0.004 * k)
-            step = max(6.0, w / 160)
-            x = 0.0
-            path.moveTo(0, base)
-            while x <= w + step:
-                y = base + amp * math.sin(x / (w / (7 + k * 2)) * 2 * math.pi + t * (0.8 + 0.35 * k))
-                path.lineTo(x, y)
-                x += step
-            p.drawPath(path)
+        paint_waves(p, w, h, t, pal)
 
     def _scope(self, p, w, h, t, pal):
         c, r = self.scope(w, h)
@@ -244,8 +253,8 @@ def page_qss(pal):
     return f"""
 QWidget#page {{ background: {pal['bg']}; }}
 QLabel {{ color: {pal['ink']}; }}
-QLabel#heading {{ font-family: "Cambria", "Georgia"; font-size: 28px; font-weight: 700; color: {pal['ink']}; }}
-QLabel#section {{ font-family: "Cambria", "Georgia"; font-size: 17px; font-weight: 700; color: {pal['ink']}; }}
+QLabel#heading {{ font-family: "Constantia", "Georgia"; font-size: 28px; font-weight: 700; color: {pal['ink']}; }}
+QLabel#section {{ font-family: "Constantia", "Georgia"; font-size: 17px; font-weight: 700; color: {pal['ink']}; }}
 QLabel#muted {{ color: {pal['muted']}; }}
 """ + plate_qss(pal, 0.85)
 
@@ -255,10 +264,10 @@ def side_qss(pal):
     return f"""
 QFrame#card {{ background: {pal['panel']}; border: 1px solid {pal['panel_line']}; border-top: 3px solid {pal['sonar']}; border-radius: 6px; }}
 QLabel {{ color: {pal['ink']}; }}
-QLabel#section {{ font-family: "Cambria", "Georgia"; font-size: 17px; font-weight: 700; color: {pal['sonar']}; }}
-QLabel#status {{ font-family: "Cambria", "Georgia"; font-size: 21px; font-weight: 700; color: {pal['ink']}; }}
-QLabel#statusWin {{ font-family: "Cambria", "Georgia"; font-size: 21px; font-weight: 700; color: {pal['ok']}; }}
-QLabel#statusLoss {{ font-family: "Cambria", "Georgia"; font-size: 21px; font-weight: 700; color: {pal['bad']}; }}
+QLabel#section {{ font-family: "Constantia", "Georgia"; font-size: 17px; font-weight: 700; color: {pal['sonar']}; }}
+QLabel#status {{ font-family: "Constantia", "Georgia"; font-size: 21px; font-weight: 700; color: {pal['ink']}; }}
+QLabel#statusWin {{ font-family: "Constantia", "Georgia"; font-size: 21px; font-weight: 700; color: {pal['ok']}; }}
+QLabel#statusLoss {{ font-family: "Constantia", "Georgia"; font-size: 21px; font-weight: 700; color: {pal['bad']}; }}
 QLabel#muted {{ color: {pal['muted']}; }}
 QLabel#hint {{ font-family: "Consolas"; font-size: 12px; color: {pal['muted']}; }}
 QListWidget {{ font-family: "Consolas"; font-size: 13px; background: {pal['bg']}; color: {pal['ink']};
@@ -277,7 +286,7 @@ def menu_qss(pal, k):
 QFrame#log {{ background: {pal['panel']}; border: 1px solid {pal['panel_line']}; border-radius: {px(8)}; }}
 QFrame#rule {{ background: {pal['accent']}; border: none; }}
 QLabel#seaTag {{ font-family: "Consolas"; font-size: {px(13)}; color: {pal['sonar']}; }}
-QLabel#seaSub {{ font-family: "Cambria", "Georgia"; font-style: italic; font-size: {px(16)}; color: {pal['muted']}; }}
+QLabel#seaSub {{ font-family: "Constantia", "Georgia"; font-style: italic; font-size: {px(16)}; color: {pal['muted']}; }}
 QLabel#seaCaption {{ font-family: "Consolas"; font-size: {px(13)}; color: {pal['muted']}; }}
 QLabel#seaFoot {{ font-family: "Consolas"; font-size: {px(12)}; color: {pal['muted']}; }}
 """ + plate_qss(pal, k)
@@ -323,10 +332,11 @@ class MenuPage(Sonar):
             self.seg[key] = buttons
         grid.setColumnStretch(2, 1)
         col.addWidget(self.log)
-        self.play_button = button("", "menuPrimary", lambda: gw.play_clicked())
+        self.play_button = button("", "menuPrimary", lambda: gw.menu_play())
+        self.new_button = button("", None, lambda: gw.play_clicked())      # сдаться и новый бой
         self.stats_button = button("", None, lambda: gw.show_page("stats"))
         self.settings_button = button("", None, lambda: gw.show_page("settings"))
-        self.buttons = (self.play_button, self.stats_button, self.settings_button)
+        self.buttons = (self.play_button, self.new_button, self.stats_button, self.settings_button)
         for b in self.buttons:
             col.addWidget(b)
         col.addStretch(1)
@@ -402,11 +412,18 @@ class MenuPage(Sonar):
             b.setText(t("mode_" + k))
         self.seg["touch"][False].setText(t("touch_strict"))
         self.seg["touch"][True].setText(t("touch_corners"))
-        self.play_button.setText(t("play").upper())
+        self.new_button.setText(t("give_up_new").upper())
+        self.set_battle(self.gw.in_battle() if hasattr(self.gw, "session") else False)
         self.stats_button.setText(t("stats").upper())
         self.settings_button.setText(t("settings").upper())
         self.apply_scale(force=True)
         self.sync(self.gw.settings)
+
+    def set_battle(self, battle):
+        """Идёт бой: «Продолжить бой» и «Сдаться и новый бой» (проверка 17.10)."""
+        t = self.gw.t
+        self.play_button.setText((t("continue_battle") if battle else t("play")).upper())
+        self.new_button.setVisible(battle)
 
     def set_foot(self, text):
         self.foot.setText(text)

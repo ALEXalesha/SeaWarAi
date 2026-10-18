@@ -9,7 +9,7 @@ import os
 import random
 
 import numpy as np
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
                                QLabel, QListWidget, QScrollArea, QSlider, QStackedWidget, QTableWidget,
@@ -27,6 +27,8 @@ from game.core.rules import Rules, cell_name, valid_fleet
 from game.ui.ai_thread import AiController
 from game.ui.board import BoardWidget, SetupBoard
 from game.ui.i18n import translator
+from aikit.skin import SettingsList, SkinPage, StatTiles
+from game.ui.skin import SKIN
 from game.ui.menu import MenuPage, page_qss, side_qss
 from game.ui.menu import palette as sea_palette
 from game.ui.session import Session
@@ -162,6 +164,7 @@ class PlayPage(QWidget):
         self.body = body
         self.scroll = scroll
         scroll.setWidget(body)
+        body.installEventFilter(self)        # ширина тела панели сменилась - подписи заново
         col = QVBoxLayout(body)
         col.setContentsMargins(16, 14, 16, 14)
         col.setSpacing(6)
@@ -192,7 +195,7 @@ class PlayPage(QWidget):
         self.pause_button = button("", None, lambda: gw.toggle_pause())
         col.addWidget(self.pause_button)
         last = QHBoxLayout()
-        self.again_button = button("", "primary", lambda: gw.play_clicked())
+        self.again_button = button("", "primary", lambda: gw.new_clicked())
         self.menu_button = button("", None, lambda: gw.show_page("menu"))
         last.addWidget(self.again_button, 1)
         last.addWidget(self.menu_button, 1)
@@ -201,14 +204,28 @@ class PlayPage(QWidget):
         self.side = side
 
     def fit_labels(self):
-        """Подписи с переносом - по своей ширине (ловушка qt-wrapped-label-height: только минимум)."""
+        """Подписи с переносом - по своей ширине (ловушка qt-wrapped-label-height: только минимум).
+        Тело панели - сразу по новой наименьшей высоте: заголовок «Морской бой · Средний · По
+        одному» во второй строке срезался снизу («одномv», проверка 17.10), пока ширина тела
+        менялась после resizeEvent страницы."""
         for w in self.side.findChildren(QLabel):
             if w.wordWrap() and w.width() > 0:
                 w.setMinimumHeight(w.heightForWidth(w.width()))
+        lay = self.body.layout()
+        if lay is not None:
+            lay.activate()
+            need = self.body.minimumSizeHint().height()
+            if self.body.height() < need:
+                self.body.resize(self.body.width(), need)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.fit_labels()
+
+    def eventFilter(self, obj, event):
+        if obj is self.body and event.type() == QEvent.Type.Resize:
+            self.fit_labels()
+        return False
 
     def retranslate(self):
         t = self.gw.t
@@ -250,21 +267,17 @@ def item(text, align=Qt.AlignmentFlag.AlignCenter):
     return it
 
 
-class StatsPage(QWidget):
+class StatsPage(SkinPage):
+    """Статистика в стиле «штурманской рубки» (aikit.skin, game/ui/skin.py): морская карта на фоне,
+    таблички с полосой сонара, плитки с крупными числами."""
+
     def __init__(self, gw):
-        super().__init__()
+        super().__init__(SKIN, back=lambda: gw.show_page("menu"))
         self.gw = gw
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        outer, col = scroll_page()
-        lay.addWidget(outer)
-        top = QHBoxLayout()
-        self.heading = label("", "heading")
-        top.addWidget(self.heading)
-        top.addStretch(1)
-        self.menu_button = button("", None, lambda: gw.show_page("menu"))
-        top.addWidget(self.menu_button)
-        col.addLayout(top)
+        self.menu_button = self.back_button
+        col = self.col
+        self.tiles = StatTiles(4, min_tile=170)
+        col.addWidget(self.tiles)
         mine = card()
         mc = QVBoxLayout(mine)
         mc.setContentsMargins(18, 14, 18, 14)
@@ -298,10 +311,25 @@ class StatsPage(QWidget):
         col.addWidget(pc)
         col.addStretch(1)
 
+    def refresh_tiles(self):
+        t = self.gw.t
+        data = self.gw.ctx.stats.data.values()
+        games = sum(e["games"] for e in data)
+        wins = sum(e["wins"] for e in data)
+        streak = max((e["best_streak"] for e in data), default=0)
+        recs = self.gw.records()
+        best = min(recs.values()) if recs else None
+        self.tiles.set_tile(0, games, t("tile_games"), t("tile_games_note"))
+        self.tiles.set_tile(1, wins, t("tile_wins"), t("tile_rate", p=round(100 * wins / games)) if games else "")
+        self.tiles.set_tile(2, best if best else "-", t("tile_record"), "" if best else t("tile_record_none"))
+        self.tiles.set_tile(3, streak, t("tile_streak"))
+        self.set_tag(t("menu_tag_stats"))
+
     def refresh(self):
         t = self.gw.t
         self.heading.setText(t("stats_title"))
         self.menu_button.setText(t("menu"))
+        self.refresh_tiles()
         self.mine_title.setText(t("your_games"))
         self.table.setHorizontalHeaderLabels([t(k) for k in ("col_setup", "col_games", "col_wins", "col_losses",
                                                                "col_streak", "col_best")])
@@ -370,32 +398,18 @@ class StatsPage(QWidget):
 # --- настройки ---
 
 
-class SettingsPage(QWidget):
+class SettingsPage(SkinPage):
+    """Настройки в стиле «штурманской рубки»: таблички на всю ширину (как статистика; автор 17.10),
+    две группы - вид и звук, бой."""
+
     def __init__(self, gw):
-        super().__init__()
+        super().__init__(SKIN, back=lambda: gw.show_page("menu"))
         self.gw = gw
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        outer, col = scroll_page()
-        lay.addWidget(outer)
-        top = QHBoxLayout()
-        self.heading = label("", "heading")
-        top.addWidget(self.heading)
-        top.addStretch(1)
-        self.menu_button = button("", None, lambda: gw.show_page("menu"))
-        top.addWidget(self.menu_button)
-        col.addLayout(top)
-        # карточка на всю ширину страницы, как карточки статистики (автор 17.10: настройки
-        # не должны стоять узкой колонкой у левого края); подписи - 3 части, поля - 2
-        box = card()
+        self.menu_button = self.back_button
+        box = SettingsList()
         self.box = box
-        self.grid = QGridLayout(box)
-        self.grid.setContentsMargins(22, 18, 22, 18)
-        self.grid.setHorizontalSpacing(22)
-        self.grid.setVerticalSpacing(16)
-        self.grid.setColumnStretch(0, 3)
-        self.grid.setColumnStretch(1, 2)
-        self.rows = {}
+        self.rows = box.rows
+        box.group("")
         self.theme_combo = Combo()
         for k in theme.THEMES:
             self.theme_combo.addItem("", k)
@@ -415,6 +429,7 @@ class SettingsPage(QWidget):
         self.anim.setRange(0, 1200)
         self.anim.valueChanged.connect(lambda v: gw.change("anim_ms", int(v)))
         self._row("anim", self.anim)
+        box.group("")
         self.delay = QSlider(Qt.Orientation.Horizontal)
         self.delay.setRange(0, 3000)
         self.delay.valueChanged.connect(lambda v: gw.change("delay_ms", int(v)))
@@ -424,27 +439,21 @@ class SettingsPage(QWidget):
         self._row("salvo_rule", self.salvo_box)
         self.habits_button = button("", None, lambda: gw.forget_habits())
         self._row("habits", self.habits_button)
-        col.addWidget(box)
+        self.col.addWidget(box)
         self.note = label("", "hint")
-        col.addWidget(self.note)
-        col.addStretch(1)
+        self.col.addWidget(self.note)
+        self.col.addStretch(1)
 
     def _row(self, key, widget):
-        r = len(self.rows)
-        names = QVBoxLayout()
-        names.setSpacing(2)
-        title = label("", "section")
-        hint = label("", "hint", wrap=True)
-        names.addWidget(title)
-        names.addWidget(hint)
-        self.grid.addLayout(names, r, 0)
-        self.grid.addWidget(widget, r, 1)
-        self.rows[key] = (title, hint)
+        self.box.add(key, widget)
 
     def retranslate(self):
         t = self.gw.t
         self.heading.setText(t("settings_title"))
         self.menu_button.setText(t("menu"))
+        self.set_tag(t("menu_tag_settings"))
+        self.box.set_group(0, t("group_view"))
+        self.box.set_group(1, t("group_battle"))
         for key, (title, hint) in self.rows.items():
             title.setText(t(key))
             hint.setText(t(key + "_hint", n=self.gw.habits.games) if key == "habits" else t(key + "_hint"))
@@ -508,7 +517,8 @@ class GameWidget(QWidget):
                       "settings": self.settings_page}
         for p in self.pages.values():
             self.stack.addWidget(p)
-        for keys, slot in (("Escape", lambda: self.show_page("menu")), ("N", self.play_clicked),
+        self.confirm_new = False       # N/«Новая партия» посреди боя: второй раз - сдаться
+        for keys, slot in (("Escape", lambda: self.show_page("menu")), ("N", self.new_clicked),
                            ("R", self.random_setup)):
             sc = QShortcut(QKeySequence(keys), self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -541,6 +551,7 @@ class GameWidget(QWidget):
             self.settings_page.sync()
         elif name == "menu":
             self.menu.sync(self.settings)
+            self.menu.set_battle(self.in_battle())
             self.refresh_menu()
         elif name == "setup":
             self.setup.board.set_rules(self.rules())
@@ -594,14 +605,20 @@ class GameWidget(QWidget):
         self.play.side.setStyleSheet(side_qss(sea))
         for b in (self.play.own, self.play.enemy, self.setup.board):
             b.set_theme(self.ctx.theme, self.ctx.lang)
-        self.stats.charts.set_theme(self.ctx.theme)
         for combo in self.findChildren(Combo):
             combo.set_arrow_color(c["text"])
+        # настройки и статистика - в стиле «штурманской рубки» (aikit.skin; автор 17.10)
+        SKIN.lang = self.ctx.lang
+        self.stats.set_theme(self.ctx.theme)
+        self.settings_page.set_theme(self.ctx.theme)
         self.update()
 
     def retranslate(self):
         for b in (self.play.own, self.play.enemy, self.setup.board):
             b.set_theme(self.ctx.theme, self.ctx.lang)
+        SKIN.lang = self.ctx.lang                  # буквы сетки на фоне страниц - на языке окна
+        self.stats.set_theme(self.ctx.theme)
+        self.settings_page.set_theme(self.ctx.theme)
         self.menu.retranslate()
         self.refresh_menu()
         self.setup.retranslate()
@@ -633,7 +650,9 @@ class GameWidget(QWidget):
             self.after_change()
 
     def shutdown(self):
-        """Окно закрывается: таймеры стоп, расчёты ИИ остановить и дождаться (не дольше 2 с)."""
+        """Окно закрывается: таймеры стоп, расчёты ИИ остановить и дождаться (не дольше 2 с).
+        Начатый бой (был выстрел человека) - поражение."""
+        self.give_up()
         self._invalidate()
         for b in (self.play.own, self.play.enemy):
             b.stop()
@@ -656,7 +675,56 @@ class GameWidget(QWidget):
 
     # --- партия ---
 
+    def in_battle(self):
+        """Бой человека с ИИ начат и не кончен: в меню «Продолжить бой», новый - только сдавшись."""
+        s = self.session
+        return s is not None and s.mode == "play" and not s.over and not s.recorded
+
+    def menu_play(self):
+        """Главная кнопка меню: идёт бой - вернуться в него (проверка 17.10: после Esc бой пропадал)."""
+        if self.in_battle():
+            self.show_page("play")
+            self.after_change()
+        else:
+            self.play_clicked()
+
+    def give_up(self):
+        """Сдаться: брошенный после первого выстрела человека бой - поражение (как в Дураке и КНБ;
+        проверка 17.10: Esc/N посреди боя бросали его без записи)."""
+        s = self.session
+        if not self.in_battle():
+            return False
+        if s.human_shots:
+            self.ctx.stats.record(s.stats_key(), "loss")
+            level, variant = s.stats_key().split("/")[:2]
+            self.history.record({"level": level, "variant": variant, "outcome": "loss",
+                                 "shots": s.match.shots[s.human], "abandoned": 1})
+        s.recorded = True
+        self.session = None
+        self._invalidate()
+        return True
+
+    def new_clicked(self):
+        """N и «Новая партия»: посреди боя сначала вопрос, второй раз - сдаться и новый бой."""
+        if self.current_page() == "play" and self.in_battle() and self.session.human_shots:
+            if not self.confirm_new:
+                self.confirm_new = True
+                self.play.substatus.setText(self.t("confirm_new"))
+                self.play.again_button.setText(self.t("give_up_new"))
+                self.play.fit_labels()
+                return
+            self.give_up()
+        elif self.current_page() not in ("play", "setup", "menu") or self.in_battle():
+            return                       # в статистике и настройках N ничего не делает, в меню
+                                         # при начатом бое - тоже (сдаться - своей кнопкой)
+        self.confirm_new = False
+        self.play_clicked()
+
     def play_clicked(self):
+        if self.in_battle():
+            self.give_up()
+        self.confirm_new = False
+        self.play.again_button.setText(self.t("again"))
         if self.settings["mode"] == "demo":
             self.start_battle()
         else:
@@ -699,6 +767,9 @@ class GameWidget(QWidget):
 
     def _fire(self, cell):
         s = self.session
+        if self.confirm_new:                 # выстрелил - значит, передумал сдаваться
+            self.confirm_new = False
+            self.play.again_button.setText(self.t("again"))
         p, shot = s.fire(cell)
         target = 1 - p
         self.last[target] = cell

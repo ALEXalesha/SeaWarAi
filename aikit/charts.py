@@ -5,7 +5,8 @@
 линии тоньше, тогда в углу значения всех с подписями - они же легенда. Доли (percent=True)
 идут по шкале 0-100 %, числа - по круглой шкале y_scale (шаг 1, 2, 2.5, 5 на степень десяти),
 с линией нуля, если есть отрицательные значения. Цвета - из темы aikit, график меняется
-вместе с темой (set_theme).
+вместе с темой (set_theme). С set_skin(skin) (aikit.skin, 0.4.0) цвета, шрифты и рамка карточки -
+от стиля игры: карточки графиков того же вида, что и карточки её страницы.
 
 Пустые данные: пока у главной линии меньше двух точек, карточка не прячется и не рисует
 пустую сетку с одной точкой (так было в WritingSpeed), а говорит словами, откуда возьмётся
@@ -238,6 +239,7 @@ class ChartCard(QWidget):
         self.labels = []                # [(текст, QRectF)] - всё написанное при последней отрисовке
         self.drawn_points = 0           # вершин линий при последней отрисовке (густые - полосой)
         self.shown_empty = False        # последняя отрисовка - заглушка
+        self.skin = None                # aikit.skin.Skin игры: цвета, шрифты, рамка (0.4.0)
         self.setMinimumSize(280, self.HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(self.HEIGHT)
@@ -261,11 +263,18 @@ class ChartCard(QWidget):
     def has_data(self):
         return False
 
+    def set_skin(self, skin):
+        self.skin = skin
+        self.update()
+
     def pal(self):
+        if self.skin is not None:
+            return self.skin.palette(self.theme)
         return aitheme.palette(self.theme)
 
-    @staticmethod
-    def fonts():
+    def fonts(self):
+        if self.skin is not None:
+            return self.skin.chart_fonts()
         title = QFont("Segoe UI")
         title.setPixelSize(14)
         title.setBold(True)
@@ -308,9 +317,12 @@ class ChartCard(QWidget):
         Легенда - куски (серия целиком); не влезает в строку заголовка - идёт строками ниже."""
         pal = self.pal()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(QColor(pal["border"]), 1))
-        p.setBrush(QColor(pal["surface"]))
-        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        if self.skin is not None:
+            self.skin.paint_card(p, QRectF(self.rect()), pal)
+        else:
+            p.setPen(QPen(QColor(pal["border"]), 1))
+            p.setBrush(QColor(pal["surface"]))
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
         title_font, _ = self.fonts()
         p.setFont(title_font)
         fm = p.fontMetrics()
@@ -365,7 +377,7 @@ class ChartCard(QWidget):
 
     def empty(self, p, top):
         pal = self.pal()
-        f = QFont("Segoe UI")
+        f = QFont(self.skin.body_family if self.skin is not None else "Segoe UI")
         f.setPixelSize(13)
         p.setFont(f)
         p.setPen(QColor(pal["muted"]))
@@ -693,6 +705,11 @@ class ChartGrid(QWidget):
     def set_theme(self, name):
         for c in self.charts():
             c.set_theme(name)
+
+    def set_skin(self, skin):
+        """Вид карточек - от игры (aikit.skin): цвета, шрифты, рамка как у карточек страницы."""
+        for c in self.charts():
+            c.set_skin(skin)
 
     def columns(self, width):
         return 2 if width >= 2 * self.min_col + GAP else 1
